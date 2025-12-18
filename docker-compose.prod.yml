@@ -1,0 +1,140 @@
+# Production Docker Compose Override
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  frontend:
+    restart: always
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  api-gateway:
+    restart: always
+    environment:
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  dialer-engine:
+    restart: always
+    environment:
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  agi-server:
+    restart: always
+    environment:
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  celery-worker:
+    restart: always
+    environment:
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  celery-beat:
+    restart: always
+    environment:
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  flower:
+    restart: always
+    # In production, you may want to add authentication
+    # command: celery -A app.worker flower --basic_auth=admin:password
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  postgresql:
+    restart: always
+    # Production PostgreSQL tuning
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  redis:
+    restart: always
+    # Production Redis configuration
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  minio:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+# Production volumes with explicit driver options for Windows compatibility
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge

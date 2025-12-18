@@ -1,0 +1,233 @@
+services:
+  # =============================================================================
+  # FRONTEND (Nginx serving React app)
+  # =============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile
+    container_name: autodialer-frontend
+    ports:
+      - "80:80"  # Frontend accessible at http://localhost
+    networks:
+      - frontend_net
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+  # =============================================================================
+  # API GATEWAY
+  # =============================================================================
+  api-gateway:
+    build:
+      context: ./backend
+      dockerfile: ../docker/api-gateway/Dockerfile
+    container_name: autodialer-api
+    ports:
+      - "8000:8000"  # API accessible at http://localhost:8000
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-in-production}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+    networks:
+      - frontend_net
+      - backend_net
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =============================================================================
+  # DIALER ENGINE
+  # =============================================================================
+  dialer-engine:
+    build:
+      context: ./backend
+      dockerfile: ../docker/dialer-engine/Dockerfile
+    container_name: autodialer-dialer
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
+      - REDIS_URL=redis://redis:6379/0
+      - AMI_HOST=${AMI_HOST:-192.168.1.100}
+      - AMI_PORT=${AMI_PORT:-5038}
+      - AMI_USERNAME=${AMI_USERNAME:-autodialer_ami}
+      - AMI_PASSWORD=${AMI_PASSWORD:-}
+    networks:
+      - backend_net
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =============================================================================
+  # AGI SERVER (FastAGI for IVR)
+  # =============================================================================
+  agi-server:
+    build:
+      context: ./backend
+      dockerfile: ../docker/agi-server/Dockerfile
+    container_name: autodialer-agi
+    ports:
+      - "4573:4573"  # FastAGI port - must be accessible from UCM6302
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - backend_net
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =============================================================================
+  # CELERY WORKER
+  # =============================================================================
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/celery/Dockerfile
+    container_name: autodialer-celery-worker
+    command: celery -A workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+    networks:
+      - backend_net
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =============================================================================
+  # CELERY BEAT (Scheduler)
+  # =============================================================================
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: ../docker/celery/Dockerfile
+    container_name: autodialer-celery-beat
+    command: celery -A workers.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - backend_net
+    depends_on:
+      - celery-worker
+    restart: unless-stopped
+
+  # =============================================================================
+  # FLOWER (Celery Monitoring)
+  # =============================================================================
+  flower:
+    image: mher/flower:0.9.7
+    container_name: autodialer-flower
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    networks:
+      - backend_net
+    depends_on:
+      - redis
+      - celery-worker
+    restart: unless-stopped
+
+  # =============================================================================
+  # POSTGRESQL
+  # =============================================================================
+  postgresql:
+    image: postgres:15-alpine
+    container_name: autodialer-postgresql
+    environment:
+      - POSTGRES_USER=autodialer
+      - POSTGRES_PASSWORD=autodialer_secret
+      - POSTGRES_DB=autodialer
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autodialer -d autodialer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # =============================================================================
+  # REDIS
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: autodialer-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # =============================================================================
+  # MINIO (S3-Compatible Storage)
+  # =============================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: autodialer-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"  # MinIO Console
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  postgresql_data:
+  redis_data:
+  minio_data:
