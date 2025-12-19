@@ -1,4 +1,4 @@
-import type { Node, Edge } from '@xyflow/react';
+import type { Edge } from '@xyflow/react';
 
 // IVR Node Types matching backend enum
 export type IVRNodeType =
@@ -12,9 +12,11 @@ export type IVRNodeType =
   | 'set_variable'
   | 'hangup';
 
-// Node data interfaces
+// Node data interfaces - using index signature for React Flow compatibility
 export interface BaseNodeData {
+  [key: string]: unknown;
   label: string;
+  type: IVRNodeType;
   description?: string;
 }
 
@@ -35,15 +37,15 @@ export interface MenuNodeData extends BaseNodeData {
   promptAudioName?: string;
   timeout?: number;
   maxRetries?: number;
-  options: Record<string, string>; // key -> next node id
+  options: Record<string, string>;
 }
 
 export interface SurveyQuestionNodeData extends BaseNodeData {
   type: 'survey_question';
-  questionId: string;
+  questionId?: string;
   promptAudioId?: string;
   promptAudioName?: string;
-  validInputs: string[];
+  validInputs?: string[];
 }
 
 export interface RecordNodeData extends BaseNodeData {
@@ -55,21 +57,21 @@ export interface RecordNodeData extends BaseNodeData {
 
 export interface TransferNodeData extends BaseNodeData {
   type: 'transfer';
-  destination: string;
-  transferType: 'blind' | 'attended';
+  destination?: string;
+  transferType?: 'blind' | 'attended';
 }
 
 export interface ConditionalNodeData extends BaseNodeData {
   type: 'conditional';
-  variable: string;
-  operator: 'equals' | 'not_equals' | 'greater' | 'less' | 'contains';
-  value: string;
+  variable?: string;
+  operator?: 'equals' | 'not_equals' | 'greater' | 'less' | 'contains';
+  value?: string;
 }
 
 export interface SetVariableNodeData extends BaseNodeData {
   type: 'set_variable';
-  variableName: string;
-  value: string;
+  variableName?: string;
+  value?: string;
 }
 
 export interface HangupNodeData extends BaseNodeData {
@@ -88,7 +90,14 @@ export type IVRNodeData =
   | SetVariableNodeData
   | HangupNodeData;
 
-export type IVRNode = Node<IVRNodeData, IVRNodeType>;
+// Custom IVR Node type (simplified for React Flow compatibility)
+export interface IVRNode {
+  id: string;
+  type: IVRNodeType;
+  position: { x: number; y: number };
+  data: IVRNodeData;
+}
+
 export type IVREdge = Edge;
 
 // Flow definition matching backend structure
@@ -125,7 +134,7 @@ export interface NodeConfig {
   description: string;
   icon: string;
   color: string;
-  defaultData: Partial<IVRNodeData>;
+  defaultData: IVRNodeData;
 }
 
 export const NODE_CONFIGS: NodeConfig[] = [

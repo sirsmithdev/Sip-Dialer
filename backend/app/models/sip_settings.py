@@ -1,5 +1,6 @@
 """
-SIP Settings model for storing PBX connection configuration.
+SIP Settings model for storing PJSIP extension configuration.
+Connects directly to Grandstream UCM6302 as a PJSIP extension.
 """
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
@@ -35,21 +36,13 @@ class ConnectionStatus(str, enum.Enum):
         return name
 
 
-class ChannelDriver(str, enum.Enum):
-    """Asterisk SIP channel driver type."""
-    PJSIP = "PJSIP"
-    SIP = "SIP"
-
-    def _generate_next_value_(name, start, count, last_values):
-        return name
-
-
 class SIPSettings(Base, UUIDMixin, TimestampMixin):
     """
-    SIP Settings model for storing PBX connection configuration.
+    SIP Settings model for PJSIP extension configuration.
 
     Stores all settings needed to connect to the Grandstream UCM6302
-    or other Asterisk-based PBX systems.
+    as a PJSIP extension. The app registers as a SIP endpoint and
+    makes calls via SIP INVITE (like a softphone).
     """
 
     __tablename__ = "sip_settings"
@@ -66,7 +59,7 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
     sip_server: Mapped[str] = mapped_column(String(255), nullable=False)
     sip_port: Mapped[int] = mapped_column(Integer, default=5060)
 
-    # SIP Credentials
+    # SIP Credentials (PJSIP extension credentials)
     sip_username: Mapped[str] = mapped_column(String(100), nullable=False)
     sip_password_encrypted: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -88,21 +81,9 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
     rtp_port_end: Mapped[int] = mapped_column(Integer, default=20000)
 
     # Codecs (ordered array of codec names)
-    # Default: ["ulaw", "alaw", "g722", "g729"]
     codecs: Mapped[list] = mapped_column(
         JSON, default=["ulaw", "alaw", "g722"]
     )
-
-    # Channel Driver (PJSIP vs SIP)
-    channel_driver: Mapped[ChannelDriver] = mapped_column(
-        SQLEnum(ChannelDriver, name='channeldriver'), default=ChannelDriver.PJSIP
-    )
-
-    # AMI Connection Settings
-    ami_host: Mapped[Optional[str]] = mapped_column(String(255))
-    ami_port: Mapped[int] = mapped_column(Integer, default=5038)
-    ami_username: Mapped[Optional[str]] = mapped_column(String(100))
-    ami_password_encrypted: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Caller ID settings
     default_caller_id: Mapped[Optional[str]] = mapped_column(String(50))
@@ -117,4 +98,4 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
     last_error: Mapped[Optional[str]] = mapped_column(String(500))
 
     def __repr__(self) -> str:
-        return f"<SIPSettings {self.sip_server}:{self.sip_port}>"
+        return f"<SIPSettings {self.sip_server}:{self.sip_port} ({self.sip_username})>"

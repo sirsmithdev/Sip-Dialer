@@ -1,5 +1,5 @@
 """
-SIP Settings service for managing PBX connection configuration.
+SIP Settings service for managing PJSIP extension configuration.
 """
 from typing import Optional
 
@@ -44,10 +44,6 @@ class SIPSettingsService:
             rtp_port_start=settings_in.rtp_port_start,
             rtp_port_end=settings_in.rtp_port_end,
             codecs=settings_in.codecs,
-            ami_host=settings_in.ami_host or settings_in.sip_server,
-            ami_port=settings_in.ami_port,
-            ami_username=settings_in.ami_username,
-            ami_password_encrypted=encrypt_value(settings_in.ami_password) if settings_in.ami_password else None,
             default_caller_id=settings_in.default_caller_id,
             caller_id_name=settings_in.caller_id_name,
         )
@@ -67,11 +63,6 @@ class SIPSettingsService:
         # Handle password encryption
         if "sip_password" in update_data:
             update_data["sip_password_encrypted"] = encrypt_value(update_data.pop("sip_password"))
-
-        if "ami_password" in update_data:
-            ami_password = update_data.pop("ami_password")
-            if ami_password:
-                update_data["ami_password_encrypted"] = encrypt_value(ami_password)
 
         for field, value in update_data.items():
             setattr(settings, field, value)
@@ -102,12 +93,6 @@ class SIPSettingsService:
     def get_decrypted_sip_password(self, settings: SIPSettings) -> str:
         """Get decrypted SIP password."""
         return decrypt_value(settings.sip_password_encrypted)
-
-    def get_decrypted_ami_password(self, settings: SIPSettings) -> Optional[str]:
-        """Get decrypted AMI password."""
-        if settings.ami_password_encrypted:
-            return decrypt_value(settings.ami_password_encrypted)
-        return None
 
     async def delete(self, settings: SIPSettings) -> None:
         """Delete SIP settings."""

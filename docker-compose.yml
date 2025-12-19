@@ -51,7 +51,7 @@ services:
     restart: unless-stopped
 
   # =============================================================================
-  # DIALER ENGINE
+  # DIALER ENGINE (Direct SIP/PJSIP Calling)
   # =============================================================================
   dialer-engine:
     build:
@@ -61,10 +61,12 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
       - REDIS_URL=redis://redis:6379/0
-      - AMI_HOST=${AMI_HOST:-192.168.1.100}
-      - AMI_PORT=${AMI_PORT:-5038}
-      - AMI_USERNAME=${AMI_USERNAME:-autodialer_ami}
-      - AMI_PASSWORD=${AMI_PASSWORD:-}
+      # SIP settings are loaded from database (sip_settings table)
+      # Local SIP port for RTP media
+      - LOCAL_SIP_PORT=${LOCAL_SIP_PORT:-5061}
+    ports:
+      - "5061:5061/udp"   # Local SIP port for signaling
+      - "10000-10100:10000-10100/udp"  # RTP port range
     networks:
       - backend_net
     depends_on:

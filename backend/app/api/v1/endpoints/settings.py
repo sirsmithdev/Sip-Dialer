@@ -1,6 +1,7 @@
 """
-Settings endpoints (SIP configuration).
+Settings endpoints (SIP/PJSIP configuration).
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,11 +10,13 @@ from app.schemas.sip_settings import (
     SIPSettingsCreate,
     SIPSettingsUpdate,
     SIPSettingsResponse,
-    SIPConnectionTestRequest,
     SIPConnectionTestResponse,
 )
 from app.services.sip_settings_service import SIPSettingsService
+from app.services.connection_test_service import ConnectionTestService
 from app.models.user import User, UserRole
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -103,12 +106,17 @@ async def update_sip_settings(
 
 @router.post("/sip/test", response_model=SIPConnectionTestResponse)
 async def test_sip_connection(
-    test_request: SIPConnectionTestRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.MANAGER))
 ):
     """
-    Test SIP/AMI connection to the PBX.
+    Test SIP connection to the PJSIP server.
+
+    Sends a SIP OPTIONS request to verify:
+    - Network connectivity to the SIP server
+    - DNS resolution
+    - SIP server responsiveness
+    - Server capabilities
     """
     if not current_user.organization_id:
         raise HTTPException(
@@ -125,73 +133,9 @@ async def test_sip_connection(
             detail="SIP settings not configured"
         )
 
-    if test_request.test_type == "ami":
-        # Test AMI connection
-        try:
-            import socket
-
-            ami_host = settings.ami_host or settings.sip_server
-            ami_port = settings.ami_port
-
-            # Simple TCP connection test
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            result = sock.connect_ex((ami_host, ami_port))
-            sock.close()
-
-            if result == 0:
-                return SIPConnectionTestResponse(
-                    success=True,
-                    message=f"Successfully connected to AMI at {ami_host}:{ami_port}",
-                    details={"host": ami_host, "port": ami_port}
-                )
-            else:
-                return SIPConnectionTestResponse(
-                    success=False,
-                    message=f"Could not connect to AMI at {ami_host}:{ami_port}",
-                    details={"error_code": result}
-                )
-        except socket.timeout:
-            return SIPConnectionTestResponse(
-                success=False,
-                message="Connection timed out"
-            )
-        except Exception as e:
-            return SIPConnectionTestResponse(
-                success=False,
-                message=f"Connection failed: {str(e)}"
-            )
-
-    elif test_request.test_type == "sip":
-        # Basic SIP OPTIONS ping (simplified)
-        try:
-            import socket
-
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(5)
-
-            sip_server = settings.sip_server
-            sip_port = settings.sip_port
-
-            # Simple UDP connectivity test
-            sock.sendto(b"OPTIONS sip:ping@test SIP/2.0\r\n\r\n", (sip_server, sip_port))
-            sock.close()
-
-            return SIPConnectionTestResponse(
-                success=True,
-                message=f"SIP OPTIONS sent to {sip_server}:{sip_port}",
-                details={"host": sip_server, "port": sip_port, "note": "Basic connectivity test only"}
-            )
-        except Exception as e:
-            return SIPConnectionTestResponse(
-                success=False,
-                message=f"SIP test failed: {str(e)}"
-            )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid test type. Use 'ami' or 'sip'."
-        )
+    # Use the connection test service for proper SIP OPTIONS test
+    test_service = ConnectionTestService(db, logger)
+    return await test_service.test_sip_connection(settings)
 
 
 @router.delete("/sip", status_code=status.HTTP_204_NO_CONTENT)

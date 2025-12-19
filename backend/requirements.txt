@@ -39,9 +39,10 @@ minio==7.2.3
 boto3==1.34.14
 
 # =============================================================================
-# AMI (Asterisk Manager Interface)
+# SIP/VoIP (Direct PJSIP calling - no external dependencies)
 # =============================================================================
-panoramisk==1.4
+# The SIP client is implemented using Python's built-in socket library.
+# No external SIP libraries required for basic UDP signaling.
 
 # =============================================================================
 # File Processing

@@ -1,20 +1,19 @@
 """
-SIP Settings schemas.
+SIP Settings schemas for PJSIP extension configuration.
 """
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
-from app.models.sip_settings import SIPTransport, ConnectionStatus, ChannelDriver
+from app.models.sip_settings import SIPTransport, ConnectionStatus
 
 
 class SIPSettingsBase(BaseModel):
     """Base SIP settings schema."""
-    sip_server: str = Field(..., description="SIP server hostname or IP")
+    sip_server: str = Field(..., description="SIP server hostname or IP (UCM6302 address)")
     sip_port: int = Field(5060, description="SIP port")
-    sip_username: str = Field(..., description="SIP username/extension")
+    sip_username: str = Field(..., description="PJSIP extension number")
     sip_transport: SIPTransport = Field(SIPTransport.UDP, description="SIP transport protocol")
-    channel_driver: ChannelDriver = Field(ChannelDriver.PJSIP, description="Asterisk channel driver (PJSIP or SIP)")
 
     # Registration
     registration_required: bool = Field(True, description="Whether SIP registration is required")
@@ -34,11 +33,6 @@ class SIPSettingsBase(BaseModel):
         description="Audio codecs in priority order"
     )
 
-    # AMI Settings
-    ami_host: Optional[str] = Field(None, description="AMI host (defaults to SIP server)")
-    ami_port: int = Field(5038, description="AMI port")
-    ami_username: Optional[str] = Field(None, description="AMI username")
-
     # Caller ID
     default_caller_id: Optional[str] = Field(None, description="Default outbound caller ID")
     caller_id_name: Optional[str] = Field(None, description="Caller ID name")
@@ -46,8 +40,7 @@ class SIPSettingsBase(BaseModel):
 
 class SIPSettingsCreate(SIPSettingsBase):
     """SIP settings creation schema."""
-    sip_password: str = Field(..., description="SIP password")
-    ami_password: Optional[str] = Field(None, description="AMI password")
+    sip_password: str = Field(..., description="PJSIP extension password")
 
 
 class SIPSettingsUpdate(BaseModel):
@@ -57,7 +50,6 @@ class SIPSettingsUpdate(BaseModel):
     sip_username: Optional[str] = None
     sip_password: Optional[str] = None
     sip_transport: Optional[SIPTransport] = None
-    channel_driver: Optional[ChannelDriver] = None
     registration_required: Optional[bool] = None
     register_expires: Optional[int] = None
     keepalive_enabled: Optional[bool] = None
@@ -65,16 +57,12 @@ class SIPSettingsUpdate(BaseModel):
     rtp_port_start: Optional[int] = None
     rtp_port_end: Optional[int] = None
     codecs: Optional[List[str]] = None
-    ami_host: Optional[str] = None
-    ami_port: Optional[int] = None
-    ami_username: Optional[str] = None
-    ami_password: Optional[str] = None
     default_caller_id: Optional[str] = None
     caller_id_name: Optional[str] = None
 
 
 class SIPSettingsResponse(SIPSettingsBase):
-    """SIP settings response schema (excludes passwords)."""
+    """SIP settings response schema (excludes password)."""
     id: str
     organization_id: str
     is_active: bool
@@ -88,11 +76,6 @@ class SIPSettingsResponse(SIPSettingsBase):
         from_attributes = True
 
 
-class SIPConnectionTestRequest(BaseModel):
-    """Request schema for testing SIP connection."""
-    test_type: str = Field("ami", description="Type of test: 'ami' or 'sip'")
-
-
 class SIPConnectionTestResponse(BaseModel):
     """Response schema for SIP connection test."""
     success: bool
@@ -104,5 +87,5 @@ class SIPConnectionTestResponse(BaseModel):
     resolved_ip: Optional[str] = Field(None, description="DNS resolved IP address")
     test_steps: Optional[List[str]] = Field(None, description="Step-by-step log of test")
     server_info: Optional[dict] = Field(None, description="Server version and capabilities")
-    authenticated: Optional[bool] = Field(None, description="Whether authentication succeeded")
+    registered: Optional[bool] = Field(None, description="Whether registration succeeded")
     diagnostic_hint: Optional[str] = Field(None, description="User-friendly troubleshooting tip")

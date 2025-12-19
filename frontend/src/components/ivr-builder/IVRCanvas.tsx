@@ -9,6 +9,7 @@ import {
   useEdgesState,
   type Connection,
   type Edge,
+  type Node,
   BackgroundVariant,
   type ReactFlowInstance,
   Panel,
@@ -23,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Save, Undo, Redo, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 // Initial nodes with a start node
-const initialNodes: IVRNode[] = [
+const initialNodes: Node[] = [
   {
     id: 'start-1',
     type: 'start',
@@ -62,8 +63,8 @@ export function IVRCanvas({ onSave }: IVRCanvasProps) {
 
   // Handle node selection
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: IVRNode) => {
-      setSelectedNode(node);
+    (_: React.MouseEvent, node: Node) => {
+      setSelectedNode(node as unknown as IVRNode);
     },
     []
   );
@@ -90,7 +91,7 @@ export function IVRCanvas({ onSave }: IVRCanvasProps) {
       const nodeConfig: NodeConfig = JSON.parse(nodeConfigJson);
 
       // Check if trying to add multiple start nodes
-      if (nodeConfig.type === 'start' && nodes.some(n => n.data.type === 'start')) {
+      if (nodeConfig.type === 'start' && nodes.some(n => (n.data as IVRNodeData).type === 'start')) {
         return; // Don't allow multiple start nodes
       }
 
@@ -100,14 +101,14 @@ export function IVRCanvas({ onSave }: IVRCanvasProps) {
         y: event.clientY - bounds.top,
       });
 
-      const newNode: IVRNode = {
+      const newNode: Node = {
         id: `${nodeConfig.type}-${Date.now()}`,
         type: nodeConfig.type,
         position,
         data: {
           ...nodeConfig.defaultData,
           label: nodeConfig.label,
-        } as IVRNodeData,
+        },
       };
 
       setNodes((nds) => [...nds, newNode]);
@@ -159,7 +160,13 @@ export function IVRCanvas({ onSave }: IVRCanvasProps) {
   // Save flow
   const handleSave = useCallback(() => {
     if (onSave) {
-      onSave(nodes as IVRNode[], edges);
+      const ivrNodes = nodes.map(n => ({
+        id: n.id,
+        type: n.type as IVRNode['type'],
+        position: n.position,
+        data: n.data as IVRNodeData,
+      }));
+      onSave(ivrNodes, edges);
     }
   }, [nodes, edges, onSave]);
 

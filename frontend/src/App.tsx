@@ -8,24 +8,7 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { ContactsPage } from '@/pages/ContactsPage';
 import { CampaignsPage } from '@/pages/CampaignsPage';
-
-function IvrBuilderPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">IVR Builder</h1>
-        <p className="text-muted-foreground">
-          Design your interactive voice response flows
-        </p>
-      </div>
-      <div className="rounded-lg border p-6">
-        <p className="text-muted-foreground">
-          IVR flow builder will be implemented here.
-        </p>
-      </div>
-    </div>
-  );
-}
+import { IvrBuilderPage } from '@/pages/IvrBuilderPage';
 
 function AudioFilesPage() {
   return (

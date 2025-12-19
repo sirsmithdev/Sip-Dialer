@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils';
 import {
   Play,
@@ -39,13 +39,13 @@ const nodeStyles: Record<IVRNodeType, { bg: string; border: string; icon: string
   hangup: { bg: 'bg-gray-500/10', border: 'border-gray-500', icon: 'PhoneOff' },
 };
 
-interface BaseNodeProps extends NodeProps {
+interface BaseNodeProps {
   data: IVRNodeData;
   selected?: boolean;
 }
 
 function BaseNodeComponent({ data, selected }: BaseNodeProps) {
-  const nodeType = data.type as IVRNodeType;
+  const nodeType = data.type;
   const style = nodeStyles[nodeType];
   const Icon = iconMap[style.icon];
 

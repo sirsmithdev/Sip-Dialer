@@ -42,10 +42,6 @@ export function SipSettingsForm() {
     rtp_port_start: 10000,
     rtp_port_end: 20000,
     codecs: ['ulaw', 'alaw', 'g722'],
-    ami_host: '',
-    ami_port: 5038,
-    ami_username: '',
-    ami_password: '',
     default_caller_id: '',
     caller_id_name: '',
   });
@@ -65,10 +61,6 @@ export function SipSettingsForm() {
       rtp_port_start: data.rtp_port_start,
       rtp_port_end: data.rtp_port_end,
       codecs: data.codecs,
-      ami_host: data.ami_host || '',
-      ami_port: data.ami_port,
-      ami_username: data.ami_username || '',
-      ami_password: '', // Don't populate password
       default_caller_id: data.default_caller_id || '',
       caller_id_name: data.caller_id_name || '',
     });
@@ -94,19 +86,16 @@ export function SipSettingsForm() {
 
   // Test connection mutation
   const testMutation = useMutation({
-    mutationFn: (testType: 'ami' | 'sip') => sipSettingsApi.testConnection(testType),
+    mutationFn: () => sipSettingsApi.testConnection(),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Remove empty password fields if updating
+    // Remove empty password field if updating
     const submitData = { ...formData };
     if (!submitData.sip_password) {
       delete submitData.sip_password;
-    }
-    if (!submitData.ami_password) {
-      delete submitData.ami_password;
     }
 
     if (settings) {
@@ -346,52 +335,6 @@ export function SipSettingsForm() {
                 </div>
               </div>
 
-              {/* AMI Settings */}
-              <div className="space-y-4">
-                <h3 className="font-semibold">AMI Connection (Asterisk Manager Interface)</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="ami_host">AMI Host (leave blank to use SIP server)</Label>
-                    <Input
-                      id="ami_host"
-                      placeholder={formData.sip_server || '192.168.1.100'}
-                      value={formData.ami_host}
-                      onChange={(e) => handleChange('ami_host', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ami_port">AMI Port</Label>
-                    <Input
-                      id="ami_port"
-                      type="number"
-                      value={formData.ami_port}
-                      onChange={(e) => handleChange('ami_port', parseInt(e.target.value))}
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="ami_username">AMI Username</Label>
-                    <Input
-                      id="ami_username"
-                      placeholder="autodialer_ami"
-                      value={formData.ami_username}
-                      onChange={(e) => handleChange('ami_username', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="ami_password">AMI Password</Label>
-                    <Input
-                      id="ami_password"
-                      type="password"
-                      placeholder={settings ? '(unchanged)' : ''}
-                      value={formData.ami_password}
-                      onChange={(e) => handleChange('ami_password', e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-
               {/* Caller ID Settings */}
               <div className="space-y-4">
                 <h3 className="font-semibold">Caller ID</h3>
@@ -456,32 +399,33 @@ export function SipSettingsForm() {
           <CardHeader>
             <CardTitle>Connection Test</CardTitle>
             <CardDescription>
-              Test connectivity to your PBX
+              Test connectivity to your PJSIP server
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex space-x-4">
-              <Button
-                variant="outline"
-                onClick={() => testMutation.mutate('ami')}
-                disabled={testMutation.isPending}
-              >
-                Test AMI Connection
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => testMutation.mutate('sip')}
-                disabled={testMutation.isPending}
-              >
-                Test SIP Connection
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              onClick={() => testMutation.mutate()}
+              disabled={testMutation.isPending}
+            >
+              {testMutation.isPending ? 'Testing...' : 'Test SIP Connection'}
+            </Button>
             {testMutation.data && (
               <div className={`mt-4 p-4 rounded-md ${
                 testMutation.data.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
               }`}>
                 <p className="font-medium">{testMutation.data.success ? 'Success' : 'Failed'}</p>
                 <p className="text-sm">{testMutation.data.message}</p>
+                {testMutation.data.test_steps && testMutation.data.test_steps.length > 0 && (
+                  <div className="mt-2 text-xs font-mono">
+                    {testMutation.data.test_steps.map((step, index) => (
+                      <p key={index}>{step}</p>
+                    ))}
+                  </div>
+                )}
+                {testMutation.data.diagnostic_hint && (
+                  <p className="mt-2 text-sm italic">{testMutation.data.diagnostic_hint}</p>
+                )}
               </div>
             )}
           </CardContent>

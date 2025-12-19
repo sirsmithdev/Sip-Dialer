@@ -130,8 +130,8 @@ export const sipSettingsApi = {
     return response.data;
   },
 
-  testConnection: async (testType: 'ami' | 'sip'): Promise<ConnectionTestResult> => {
-    const response = await api.post('/settings/sip/test', { test_type: testType });
+  testConnection: async (): Promise<ConnectionTestResult> => {
+    const response = await api.post('/settings/sip/test');
     return response.data;
   },
 

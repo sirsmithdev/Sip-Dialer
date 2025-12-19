@@ -25,7 +25,7 @@ export interface AuthTokens {
   token_type: string;
 }
 
-// SIP Settings types
+// SIP Settings types (PJSIP extension configuration)
 export interface SIPSettings {
   id: string;
   organization_id: string;
@@ -40,9 +40,6 @@ export interface SIPSettings {
   rtp_port_start: number;
   rtp_port_end: number;
   codecs: string[];
-  ami_host: string | null;
-  ami_port: number;
-  ami_username: string | null;
   default_caller_id: string | null;
   caller_id_name: string | null;
   is_active: boolean;
@@ -66,10 +63,6 @@ export interface SIPSettingsCreate {
   rtp_port_start: number;
   rtp_port_end: number;
   codecs: string[];
-  ami_host?: string;
-  ami_port: number;
-  ami_username?: string;
-  ami_password?: string;
   default_caller_id?: string;
   caller_id_name?: string;
 }
@@ -78,6 +71,12 @@ export interface ConnectionTestResult {
   success: boolean;
   message: string;
   details?: Record<string, unknown>;
+  timing_ms?: number;
+  resolved_ip?: string;
+  test_steps?: string[];
+  server_info?: Record<string, unknown>;
+  registered?: boolean;
+  diagnostic_hint?: string;
 }
 
 // Campaign types
