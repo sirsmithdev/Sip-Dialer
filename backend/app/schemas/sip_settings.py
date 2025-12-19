@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
-from app.models.sip_settings import SIPTransport, ConnectionStatus
+from app.models.sip_settings import SIPTransport, ConnectionStatus, ChannelDriver
 
 
 class SIPSettingsBase(BaseModel):
@@ -14,6 +14,7 @@ class SIPSettingsBase(BaseModel):
     sip_port: int = Field(5060, description="SIP port")
     sip_username: str = Field(..., description="SIP username/extension")
     sip_transport: SIPTransport = Field(SIPTransport.UDP, description="SIP transport protocol")
+    channel_driver: ChannelDriver = Field(ChannelDriver.PJSIP, description="Asterisk channel driver (PJSIP or SIP)")
 
     # Registration
     registration_required: bool = Field(True, description="Whether SIP registration is required")
@@ -56,6 +57,7 @@ class SIPSettingsUpdate(BaseModel):
     sip_username: Optional[str] = None
     sip_password: Optional[str] = None
     sip_transport: Optional[SIPTransport] = None
+    channel_driver: Optional[ChannelDriver] = None
     registration_required: Optional[bool] = None
     register_expires: Optional[int] = None
     keepalive_enabled: Optional[bool] = None
@@ -96,3 +98,11 @@ class SIPConnectionTestResponse(BaseModel):
     success: bool
     message: str
     details: Optional[dict] = None
+
+    # Enhanced diagnostics
+    timing_ms: Optional[int] = Field(None, description="Response time in milliseconds")
+    resolved_ip: Optional[str] = Field(None, description="DNS resolved IP address")
+    test_steps: Optional[List[str]] = Field(None, description="Step-by-step log of test")
+    server_info: Optional[dict] = Field(None, description="Server version and capabilities")
+    authenticated: Optional[bool] = Field(None, description="Whether authentication succeeded")
+    diagnostic_hint: Optional[str] = Field(None, description="User-friendly troubleshooting tip")

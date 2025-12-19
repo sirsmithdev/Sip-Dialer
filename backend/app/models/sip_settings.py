@@ -19,14 +19,29 @@ class SIPTransport(str, enum.Enum):
     TCP = "TCP"
     TLS = "TLS"
 
+    def _generate_next_value_(name, start, count, last_values):
+        return name
+
 
 class ConnectionStatus(str, enum.Enum):
     """Connection status."""
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    REGISTERED = "registered"
-    FAILED = "failed"
+    DISCONNECTED = "DISCONNECTED"
+    CONNECTING = "CONNECTING"
+    CONNECTED = "CONNECTED"
+    REGISTERED = "REGISTERED"
+    FAILED = "FAILED"
+
+    def _generate_next_value_(name, start, count, last_values):
+        return name
+
+
+class ChannelDriver(str, enum.Enum):
+    """Asterisk SIP channel driver type."""
+    PJSIP = "PJSIP"
+    SIP = "SIP"
+
+    def _generate_next_value_(name, start, count, last_values):
+        return name
 
 
 class SIPSettings(Base, UUIDMixin, TimestampMixin):
@@ -57,7 +72,7 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
 
     # Transport
     sip_transport: Mapped[SIPTransport] = mapped_column(
-        SQLEnum(SIPTransport), default=SIPTransport.UDP
+        SQLEnum(SIPTransport, name='siptransport'), default=SIPTransport.UDP
     )
 
     # Registration
@@ -78,6 +93,11 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
         JSON, default=["ulaw", "alaw", "g722"]
     )
 
+    # Channel Driver (PJSIP vs SIP)
+    channel_driver: Mapped[ChannelDriver] = mapped_column(
+        SQLEnum(ChannelDriver, name='channeldriver'), default=ChannelDriver.PJSIP
+    )
+
     # AMI Connection Settings
     ami_host: Mapped[Optional[str]] = mapped_column(String(255))
     ami_port: Mapped[int] = mapped_column(Integer, default=5038)
@@ -91,7 +111,7 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
     # Connection status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     connection_status: Mapped[ConnectionStatus] = mapped_column(
-        SQLEnum(ConnectionStatus), default=ConnectionStatus.DISCONNECTED
+        SQLEnum(ConnectionStatus, name='connectionstatus'), default=ConnectionStatus.DISCONNECTED
     )
     last_connected_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(String(500))

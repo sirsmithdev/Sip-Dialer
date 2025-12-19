@@ -8,7 +8,8 @@ from app.models.audio import AudioFile
 from app.models.ivr import IVRFlow, IVRFlowVersion
 from app.models.call_log import CallLog
 from app.models.survey import SurveyResponse
-from app.models.sip_settings import SIPSettings
+from app.models.sip_settings import SIPSettings, ChannelDriver, SIPTransport, ConnectionStatus
+from app.models.report import ReportSchedule, ReportExecution
 
 __all__ = [
     "User",
@@ -24,4 +25,9 @@ __all__ = [
     "CallLog",
     "SurveyResponse",
     "SIPSettings",
+    "ChannelDriver",
+    "SIPTransport",
+    "ConnectionStatus",
+    "ReportSchedule",
+    "ReportExecution",
 ]
