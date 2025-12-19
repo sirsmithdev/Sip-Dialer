@@ -1,39 +1,50 @@
 import { Outlet } from 'react-router-dom';
-import { LogOut, User } from 'lucide-react';
-import { useAuth } from '@/hooks/use-auth';
+import { Bell, Search, HelpCircle } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 export function RootLayout() {
-  const { user, logout } = useAuth();
-
-  const handleLogout = async () => {
-    await logout();
-  };
-
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-background">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 items-center justify-between border-b bg-white px-6">
-          <div />
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <User className="h-4 w-4" />
-              <span>{user?.first_name || user?.email}</span>
+        {/* Header */}
+        <header className="flex h-16 items-center justify-between border-b border-border bg-card px-6">
+          {/* Search */}
+          <div className="flex items-center gap-4 flex-1 max-w-md">
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search campaigns, contacts..."
+                className="pl-10 bg-muted/50 border-transparent focus:border-primary h-10"
+              />
             </div>
+          </div>
+
+          {/* Right side actions */}
+          <div className="flex items-center gap-2">
             <Button
               variant="ghost"
-              size="sm"
-              onClick={handleLogout}
-              className="text-gray-600 hover:text-gray-900"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground"
             >
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
+              <HelpCircle className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground relative"
+            >
+              <Bell className="h-5 w-5" />
+              <span className="absolute top-2 right-2 w-2 h-2 bg-purple-500 rounded-full" />
             </Button>
           </div>
         </header>
-        <main className="flex-1 overflow-auto p-6">
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-auto p-6 bg-muted/30">
           <Outlet />
         </main>
       </div>

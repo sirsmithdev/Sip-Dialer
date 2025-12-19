@@ -29,9 +29,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-interface ContactUploadDialogProps {
+export interface ContactUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onComplete?: () => void;
 }
 
 type UploadStep = 'upload' | 'mapping' | 'result';
@@ -44,11 +45,11 @@ const TARGET_FIELDS = [
   { key: 'timezone', label: 'Timezone', required: false },
 ] as const;
 
-export function ContactUploadDialog({ open, onOpenChange }: ContactUploadDialogProps) {
+export function ContactUploadDialog({ open, onOpenChange, onComplete }: ContactUploadDialogProps) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<UploadStep>('upload');
   const [dragActive, setDragActive] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<FilePreviewResponse | null>(null);
   const [listName, setListName] = useState('');
   const [listDescription, setListDescription] = useState('');
@@ -164,6 +165,10 @@ export function ContactUploadDialog({ open, onOpenChange }: ContactUploadDialogP
   };
 
   const handleClose = () => {
+    // Call onComplete if we successfully imported
+    if (step === 'result' && onComplete) {
+      onComplete();
+    }
     setStep('upload');
     setSelectedFile(null);
     setPreview(null);

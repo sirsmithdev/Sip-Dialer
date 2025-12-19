@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,7 +31,7 @@ export function CampaignForm({ campaign, onSubmit, onCancel, isSubmitting }: Cam
   const [name, setName] = useState(campaign?.name || '');
   const [description, setDescription] = useState(campaign?.description || '');
   const [contactListId, setContactListId] = useState(campaign?.contact_list_id || '');
-  const [ivrFlowId, setIvrFlowId] = useState(campaign?.ivr_flow_id || '');
+  const [ivrFlowId] = useState(campaign?.ivr_flow_id || '');
   const [greetingAudioId, setGreetingAudioId] = useState(campaign?.greeting_audio_id || '');
   const [voicemailAudioId, setVoicemailAudioId] = useState(campaign?.voicemail_audio_id || '');
 
@@ -72,7 +72,7 @@ export function CampaignForm({ campaign, onSubmit, onCancel, isSubmitting }: Cam
     queryFn: () => audioApi.list({ page_size: 100, is_active: true }),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     const data: CampaignCreate = {

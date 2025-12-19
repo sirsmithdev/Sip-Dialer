@@ -21,9 +21,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-interface ContactListsTableProps {
+export interface ContactListsTableProps {
   onSelectList: (list: ContactList) => void;
-  onUploadClick: () => void;
+  onUploadClick?: () => void;
 }
 
 export function ContactListsTable({ onSelectList, onUploadClick }: ContactListsTableProps) {

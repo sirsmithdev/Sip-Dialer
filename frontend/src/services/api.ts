@@ -23,7 +23,6 @@ import type {
   DNCListResponse,
   DNCCheckResponse,
   Campaign,
-  CampaignListItem,
   CampaignListResponse,
   CampaignCreate,
   CampaignUpdate,

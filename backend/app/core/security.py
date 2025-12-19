@@ -104,3 +104,9 @@ def decrypt_value(encrypted_value: str) -> str:
     """Decrypt a sensitive value."""
     fernet = get_fernet()
     return fernet.decrypt(encrypted_value.encode()).decode()
+
+
+# Alias for password-specific decryption
+def decrypt_password(encrypted_password: str) -> str:
+    """Decrypt an encrypted password. Alias for decrypt_value."""
+    return decrypt_value(encrypted_password)

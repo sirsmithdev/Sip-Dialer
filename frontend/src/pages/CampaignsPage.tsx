@@ -2,17 +2,10 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { campaignsApi } from '@/services/api';
 import { CampaignsTable, CampaignForm, CampaignDetail } from '@/components/campaigns';
-import type { CampaignListItem, CampaignCreate, CampaignUpdate } from '@/types';
+import type { CampaignCreate, CampaignUpdate, CampaignListItem } from '@/types';
 
 type ViewMode = 'list' | 'detail' | 'create' | 'edit';
 

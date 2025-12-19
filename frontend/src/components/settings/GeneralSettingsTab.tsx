@@ -36,6 +36,7 @@ const TIMEZONES = [
   'America/Los_Angeles',
   'America/Phoenix',
   'America/Anchorage',
+  'America/Jamaica',
   'Pacific/Honolulu',
   'Europe/London',
   'Europe/Paris',

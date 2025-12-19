@@ -14,6 +14,12 @@ services:
     depends_on:
       - api-gateway
     restart: unless-stopped
+    develop:
+      watch:
+        - action: rebuild
+          path: ./frontend/src
+        - action: rebuild
+          path: ./frontend/public
 
   # =============================================================================
   # API GATEWAY

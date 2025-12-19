@@ -5,14 +5,13 @@ import {
   Play,
   Pause,
   XCircle,
-  RefreshCw,
   Phone,
   Users,
   CheckCircle2,
   AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -33,7 +32,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { campaignsApi } from '@/services/api';
 import { CampaignStatusBadge } from './CampaignStatusBadge';
-import type { Campaign, CampaignStatus, ContactStatus } from '@/types';
+import type { ContactStatus } from '@/types';
 
 interface CampaignDetailProps {
   campaignId: string;
@@ -61,14 +60,14 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
   const { data: campaign, isLoading: campaignLoading } = useQuery({
     queryKey: ['campaign', campaignId],
     queryFn: () => campaignsApi.get(campaignId),
-    refetchInterval: (data) => (data?.status === 'running' ? 5000 : false),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 5000 : false),
   });
 
   // Fetch campaign stats
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats } = useQuery({
     queryKey: ['campaign-stats', campaignId],
     queryFn: () => campaignsApi.getStats(campaignId),
-    refetchInterval: (data) => (campaign?.status === 'running' ? 5000 : false),
+    refetchInterval: () => (campaign?.status === 'running' ? 5000 : false),
   });
 
   // Fetch campaign contacts
