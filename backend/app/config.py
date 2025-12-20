@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     # ==========================================================================
     encryption_key: str = "change-me-generate-a-secure-key"
 
+    # ==========================================================================
+    # SMTP Email Settings (defaults, can be overridden per-organization in DB)
+    # ==========================================================================
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "noreply@autodialer.local"
+    smtp_from_name: str = "SIP Auto-Dialer"
+    smtp_use_tls: bool = True
+    smtp_enabled: bool = False
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""

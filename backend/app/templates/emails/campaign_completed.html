@@ -1,0 +1,88 @@
+<!-- Campaign Completed Notification Email Template -->
+<div class="email-header">
+    <h1>Campaign Completed</h1>
+    <p class="subtitle">{{ campaign_name }}</p>
+</div>
+
+<div class="email-content">
+    <div class="alert alert-success" style="margin-top: 0;">
+        <strong>Great news!</strong> Your campaign "{{ campaign_name }}" has completed successfully.
+    </div>
+
+    <h2 style="margin-top: 24px;">Final Results</h2>
+
+    <!-- Key Stats -->
+    <table class="stats-grid">
+        <tr class="stat-row">
+            <td class="stat-card">
+                <p class="stat-value">{{ total_calls }}</p>
+                <p class="stat-label">Total Calls</p>
+            </td>
+            <td class="stat-card">
+                <p class="stat-value">{{ answered_calls }}</p>
+                <p class="stat-label">Answered</p>
+            </td>
+        </tr>
+        <tr class="stat-row">
+            <td class="stat-card">
+                <p class="stat-value">{{ answer_rate }}%</p>
+                <p class="stat-label">Answer Rate</p>
+            </td>
+            <td class="stat-card">
+                <p class="stat-value">{{ total_duration }}</p>
+                <p class="stat-label">Total Talk Time</p>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Campaign Timeline -->
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Campaign Timeline</h3>
+    <table class="data-table">
+        <tr>
+            <td style="font-weight: 500; width: 40%;">Started</td>
+            <td>{{ start_date }}</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 500;">Completed</td>
+            <td>{{ end_date }}</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 500;">Duration</td>
+            <td>{{ campaign_duration }}</td>
+        </tr>
+    </table>
+
+    <!-- Disposition Summary -->
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Disposition Summary</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Disposition</th>
+                <th>Count</th>
+                <th>Percentage</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for disposition in dispositions %}
+            <tr>
+                <td>{{ disposition.name }}</td>
+                <td>{{ disposition.count }}</td>
+                <td>{{ disposition.percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Action Buttons -->
+    <div style="text-align: center; margin-top: 32px;">
+        <a href="{{ report_url }}" class="button">View Full Report</a>
+    </div>
+</div>
+
+<div class="email-footer">
+    <p>Campaign completed on {{ completed_at }}</p>
+    <p style="margin-top: 8px;">
+        <a href="{{ dashboard_url }}">Go to Dashboard</a>
+    </p>
+    <p style="margin-top: 16px;">SIP Auto-Dialer - Automated Calling System</p>
+</div>

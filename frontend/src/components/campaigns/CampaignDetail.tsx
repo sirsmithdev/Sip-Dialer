@@ -33,6 +33,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { campaignsApi } from '@/services/api';
 import { CampaignStatusBadge } from './CampaignStatusBadge';
+import { SendReportDialog } from './SendReportDialog';
 import { useCampaignProgress } from '@/contexts/WebSocketContext';
 import type { ContactStatus } from '@/types';
 
@@ -193,6 +194,7 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
           </div>
         </div>
         <div className="flex gap-2">
+          <SendReportDialog campaignId={campaignId} campaignName={campaign.name} />
           {canEdit && (
             <Button variant="outline" onClick={onEdit}>
               Edit

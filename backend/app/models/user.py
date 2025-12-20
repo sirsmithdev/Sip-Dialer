@@ -48,6 +48,9 @@ class Organization(Base, UUIDMixin, TimestampMixin):
     sip_settings: Mapped[Optional["SIPSettings"]] = relationship(
         "SIPSettings", back_populates="organization", uselist=False
     )
+    email_settings: Mapped[Optional["EmailSettings"]] = relationship(
+        "EmailSettings", back_populates="organization", uselist=False
+    )
 
     def __repr__(self) -> str:
         return f"<Organization {self.name}>"

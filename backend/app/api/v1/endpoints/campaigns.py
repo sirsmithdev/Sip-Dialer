@@ -19,7 +19,9 @@ from app.schemas.campaign import (
     CampaignStatsResponse,
     CampaignScheduleRequest,
 )
+from app.schemas.email_settings import SendReportRequest, SendReportResponse
 from app.services.campaign_service import campaign_service
+from workers.tasks.email_tasks import send_campaign_report_task
 
 router = APIRouter()
 
@@ -499,3 +501,54 @@ async def get_campaign_stats(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
+
+
+# ============================================================================
+# Campaign Report Endpoints
+# ============================================================================
+
+@router.post("/{campaign_id}/send-report", response_model=SendReportResponse)
+async def send_campaign_report(
+    campaign_id: str,
+    request: SendReportRequest,
+    current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.MANAGER])),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Send a campaign report email to specified recipients.
+
+    The report is generated asynchronously via Celery and sent to the
+    provided email addresses. Returns immediately with a task ID.
+    """
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User must belong to an organization",
+        )
+
+    # Verify campaign exists and belongs to organization
+    campaign = await campaign_service.get_campaign(
+        db=db,
+        campaign_id=campaign_id,
+        organization_id=current_user.organization_id,
+    )
+
+    if not campaign:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Campaign not found",
+        )
+
+    # Queue the email task
+    task = send_campaign_report_task.delay(
+        campaign_id=campaign_id,
+        organization_id=current_user.organization_id,
+        recipient_emails=[str(email) for email in request.recipient_emails],
+    )
+
+    return SendReportResponse(
+        success=True,
+        message=f"Report generation started. Sending to {len(request.recipient_emails)} recipient(s).",
+        task_id=task.id,
+        recipients_count=len(request.recipient_emails),
+    )

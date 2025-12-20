@@ -10,6 +10,8 @@ from app.models.call_log import CallLog
 from app.models.survey import SurveyResponse
 from app.models.sip_settings import SIPSettings, SIPTransport, ConnectionStatus
 from app.models.report import ReportSchedule, ReportExecution
+from app.models.email_settings import EmailSettings
+from app.models.email_log import EmailLog, EmailType, EmailStatus
 
 __all__ = [
     "User",
@@ -29,4 +31,8 @@ __all__ = [
     "ConnectionStatus",
     "ReportSchedule",
     "ReportExecution",
+    "EmailSettings",
+    "EmailLog",
+    "EmailType",
+    "EmailStatus",
 ]

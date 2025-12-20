@@ -1,0 +1,98 @@
+<!-- Daily Summary Email Template -->
+<div class="email-header">
+    <h1>Daily Summary</h1>
+    <p class="subtitle">{{ date }}</p>
+</div>
+
+<div class="email-content">
+    <h2>Good {{ greeting }}, {{ organization_name }}</h2>
+    <p>Here's your daily summary of campaign activity for {{ date }}.</p>
+
+    <!-- Overview Stats -->
+    <table class="stats-grid">
+        <tr class="stat-row">
+            <td class="stat-card">
+                <p class="stat-value">{{ total_calls }}</p>
+                <p class="stat-label">Total Calls</p>
+            </td>
+            <td class="stat-card">
+                <p class="stat-value">{{ answered_calls }}</p>
+                <p class="stat-label">Answered</p>
+            </td>
+        </tr>
+        <tr class="stat-row">
+            <td class="stat-card">
+                <p class="stat-value">{{ active_campaigns }}</p>
+                <p class="stat-label">Active Campaigns</p>
+            </td>
+            <td class="stat-card">
+                <p class="stat-value">{{ total_duration }}</p>
+                <p class="stat-label">Total Talk Time</p>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Campaigns Summary -->
+    {% if campaigns %}
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Campaign Activity</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Campaign</th>
+                <th>Status</th>
+                <th>Calls</th>
+                <th>Answered</th>
+                <th>Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for campaign in campaigns %}
+            <tr>
+                <td>{{ campaign.name }}</td>
+                <td><span class="status-badge status-{{ campaign.status_class }}">{{ campaign.status }}</span></td>
+                <td>{{ campaign.calls }}</td>
+                <td>{{ campaign.answered }}</td>
+                <td>{{ campaign.rate }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-info">
+        No campaign activity today.
+    </div>
+    {% endif %}
+
+    <!-- Completed Campaigns -->
+    {% if completed_campaigns %}
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Completed Today</h3>
+    <div class="alert alert-success">
+        <strong>{{ completed_campaigns|length }} campaign(s) completed:</strong>
+        <ul style="margin: 8px 0 0 0; padding-left: 20px;">
+            {% for campaign in completed_campaigns %}
+            <li>{{ campaign.name }} - {{ campaign.total_calls }} calls, {{ campaign.answer_rate }}% answer rate</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Alerts/Issues -->
+    {% if alerts %}
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Alerts</h3>
+    {% for alert in alerts %}
+    <div class="alert alert-{{ alert.type }}">
+        <strong>{{ alert.title }}:</strong> {{ alert.message }}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <!-- Quick Actions -->
+    <div style="text-align: center; margin-top: 32px;">
+        <a href="{{ dashboard_url }}" class="button">View Dashboard</a>
+    </div>
+</div>
+
+<div class="email-footer">
+    <p>This summary was generated on {{ generated_at }}</p>
+    <p style="margin-top: 16px;">SIP Auto-Dialer - Automated Calling System</p>
+</div>

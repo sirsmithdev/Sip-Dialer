@@ -452,3 +452,93 @@ export interface AudioDownloadResponse {
   download_url: string;
   expires_in_seconds: number;
 }
+
+// Email Settings types
+export interface EmailSettings {
+  id: string;
+  organization_id: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  from_email: string;
+  from_name: string;
+  use_tls: boolean;
+  use_ssl: boolean;
+  is_active: boolean;
+  last_test_at: string | null;
+  last_test_success: boolean | null;
+  last_test_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmailSettingsCreate {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password: string;
+  from_email: string;
+  from_name?: string;
+  use_tls?: boolean;
+  use_ssl?: boolean;
+}
+
+export interface EmailSettingsUpdate {
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_password?: string;
+  from_email?: string;
+  from_name?: string;
+  use_tls?: boolean;
+  use_ssl?: boolean;
+  is_active?: boolean;
+}
+
+export interface EmailConnectionTestResult {
+  success: boolean;
+  message: string;
+  server_response?: string;
+}
+
+export interface SendTestEmailRequest {
+  to_email: string;
+}
+
+export interface SendTestEmailResponse {
+  success: boolean;
+  message: string;
+  log_id?: string;
+}
+
+export interface EmailLog {
+  id: string;
+  recipient_email: string;
+  subject: string;
+  email_type: string;
+  status: string;
+  error_message: string | null;
+  retry_count: number;
+  sent_at: string | null;
+  campaign_id: string | null;
+  smtp_message_id: string | null;
+  created_at: string;
+}
+
+export interface EmailLogListResponse {
+  items: EmailLog[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface SendReportRequest {
+  recipient_emails: string[];
+}
+
+export interface SendReportResponse {
+  success: boolean;
+  message: string;
+  task_id?: string;
+  recipients_count: number;
+}

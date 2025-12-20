@@ -3,6 +3,7 @@ Celery application configuration.
 """
 import os
 from celery import Celery
+from celery.schedules import crontab
 
 # Get Redis URL from environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -12,7 +13,11 @@ app = Celery(
     "autodialer",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["workers.tasks.campaign_tasks", "workers.tasks.audio_tasks"]
+    include=[
+        "workers.tasks.campaign_tasks",
+        "workers.tasks.audio_tasks",
+        "workers.tasks.email_tasks",
+    ]
 )
 
 # Celery configuration
@@ -36,6 +41,14 @@ app.conf.update(
         "cleanup-stale-calls": {
             "task": "workers.tasks.campaign_tasks.cleanup_stale_calls",
             "schedule": 300.0,  # Every 5 minutes
+        },
+        "process-scheduled-reports": {
+            "task": "workers.tasks.email_tasks.process_scheduled_reports",
+            "schedule": 3600.0,  # Every hour
+        },
+        "send-daily-summaries": {
+            "task": "workers.tasks.email_tasks.send_daily_summary",
+            "schedule": crontab(hour=8, minute=0),  # 8:00 AM daily
         },
     },
 )

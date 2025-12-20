@@ -31,6 +31,15 @@ import type {
   CampaignScheduleRequest,
   CampaignStatus,
   ContactStatus,
+  EmailSettings,
+  EmailSettingsCreate,
+  EmailSettingsUpdate,
+  EmailConnectionTestResult,
+  SendTestEmailRequest,
+  SendTestEmailResponse,
+  EmailLogListResponse,
+  SendReportRequest,
+  SendReportResponse,
 } from '@/types';
 
 const API_BASE_URL = '/api/v1';
@@ -404,6 +413,55 @@ export const campaignsApi = {
   // Campaign Statistics
   getStats: async (id: string): Promise<CampaignStats> => {
     const response = await api.get(`/campaigns/${id}/stats`);
+    return response.data;
+  },
+
+  // Send Campaign Report
+  sendReport: async (id: string, data: SendReportRequest): Promise<SendReportResponse> => {
+    const response = await api.post(`/campaigns/${id}/send-report`, data);
+    return response.data;
+  },
+};
+
+// Email Settings API
+export const emailSettingsApi = {
+  get: async (): Promise<EmailSettings> => {
+    const response = await api.get('/settings/email');
+    return response.data;
+  },
+
+  create: async (settings: EmailSettingsCreate): Promise<EmailSettings> => {
+    const response = await api.post('/settings/email', settings);
+    return response.data;
+  },
+
+  update: async (settings: EmailSettingsUpdate): Promise<EmailSettings> => {
+    const response = await api.put('/settings/email', settings);
+    return response.data;
+  },
+
+  delete: async (): Promise<void> => {
+    await api.delete('/settings/email');
+  },
+
+  testConnection: async (): Promise<EmailConnectionTestResult> => {
+    const response = await api.post('/settings/email/test');
+    return response.data;
+  },
+
+  sendTestEmail: async (data: SendTestEmailRequest): Promise<SendTestEmailResponse> => {
+    const response = await api.post('/settings/email/send-test', data);
+    return response.data;
+  },
+
+  getLogs: async (params?: {
+    email_type?: string;
+    status?: string;
+    campaign_id?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<EmailLogListResponse> => {
+    const response = await api.get('/settings/email/logs', { params });
     return response.data;
   },
 };

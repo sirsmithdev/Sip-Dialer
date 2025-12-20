@@ -1,0 +1,104 @@
+<!-- Campaign Report Email Template -->
+<div class="email-header">
+    <h1>Campaign Report</h1>
+    <p class="subtitle">{{ campaign_name }}</p>
+</div>
+
+<div class="email-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+        <h2 style="margin: 0;">Campaign Summary</h2>
+        <span class="status-badge status-{{ status_class }}">{{ status }}</span>
+    </div>
+
+    <p>Here's the detailed report for your campaign <strong>{{ campaign_name }}</strong>.</p>
+
+    <!-- Key Stats -->
+    <table class="stats-grid">
+        <tr class="stat-row">
+            <td class="stat-card">
+                <p class="stat-value">{{ total_calls }}</p>
+                <p class="stat-label">Total Calls</p>
+            </td>
+            <td class="stat-card">
+                <p class="stat-value">{{ answered_calls }}</p>
+                <p class="stat-label">Answered</p>
+            </td>
+        </tr>
+        <tr class="stat-row">
+            <td class="stat-card">
+                <p class="stat-value">{{ answer_rate }}%</p>
+                <p class="stat-label">Answer Rate</p>
+            </td>
+            <td class="stat-card">
+                <p class="stat-value">{{ avg_duration }}</p>
+                <p class="stat-label">Avg Duration</p>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Campaign Details -->
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Campaign Details</h3>
+    <table class="data-table">
+        <tr>
+            <td style="font-weight: 500; width: 40%;">Start Date</td>
+            <td>{{ start_date }}</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 500;">End Date</td>
+            <td>{{ end_date }}</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 500;">Contact List</td>
+            <td>{{ contact_list_name }}</td>
+        </tr>
+        <tr>
+            <td style="font-weight: 500;">Total Contacts</td>
+            <td>{{ total_contacts }}</td>
+        </tr>
+    </table>
+
+    <!-- Call Disposition Breakdown -->
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Call Dispositions</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Disposition</th>
+                <th>Count</th>
+                <th>Percentage</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for disposition in dispositions %}
+            <tr>
+                <td>{{ disposition.name }}</td>
+                <td>{{ disposition.count }}</td>
+                <td>{{ disposition.percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Progress -->
+    {% if progress < 100 %}
+    <h3 style="color: #1f2937; font-size: 16px; margin: 24px 0 12px 0;">Campaign Progress</h3>
+    <p style="margin: 0; font-size: 14px; color: #6b7280;">{{ progress }}% Complete</p>
+    <div class="progress-bar">
+        <div class="progress-fill" style="width: {{ progress }}%;"></div>
+    </div>
+    {% endif %}
+
+    <!-- Additional Notes -->
+    {% if notes %}
+    <div class="alert alert-info">
+        <strong>Notes:</strong> {{ notes }}
+    </div>
+    {% endif %}
+</div>
+
+<div class="email-footer">
+    <p>This report was generated on {{ generated_at }}</p>
+    <p style="margin-top: 8px;">
+        <a href="{{ dashboard_url }}">View in Dashboard</a>
+    </p>
+    <p style="margin-top: 16px;">SIP Auto-Dialer - Automated Calling System</p>
+</div>
