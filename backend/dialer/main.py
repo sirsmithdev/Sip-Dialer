@@ -12,11 +12,12 @@ import logging
 import os
 import signal
 import sys
-from typing import Optional, Dict, Any
+from datetime import datetime, time as dt_time, timedelta
+from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, selectinload
 from minio import Minio
 
 # Add parent directory to path for imports
@@ -24,6 +25,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.models.sip_settings import SIPSettings
 from app.models.audio import AudioFile
+from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus, CallDisposition
+from app.models.contact import Contact
+from app.models.ivr import IVRFlow, IVRFlowVersion
 
 # Import SIP engine components
 try:
@@ -58,6 +62,19 @@ except ImportError:
         IVR_AVAILABLE = False
         IVRExecutor = None
         IVRContext = None
+
+# Import call manager
+try:
+    from dialer.call_manager import ConcurrentCallManager, PendingContact
+    CALL_MANAGER_AVAILABLE = True
+except ImportError:
+    try:
+        from .call_manager import ConcurrentCallManager, PendingContact
+        CALL_MANAGER_AVAILABLE = True
+    except ImportError:
+        CALL_MANAGER_AVAILABLE = False
+        ConcurrentCallManager = None
+        PendingContact = None
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
@@ -103,6 +120,16 @@ class DialerEngine:
 
         # Audio file cache (maps audio_file_id to local path)
         self._audio_cache: Dict[str, str] = {}
+
+        # Call manager for concurrent calls
+        self.call_manager: Optional[ConcurrentCallManager] = None
+        self.global_max_concurrent = int(os.getenv("GLOBAL_MAX_CONCURRENT_CALLS", "50"))
+
+        # Campaign processing interval (seconds)
+        self.campaign_poll_interval = float(os.getenv("CAMPAIGN_POLL_INTERVAL", "2.0"))
+
+        # Map call_id to campaign_contact info for result tracking
+        self._call_contacts: Dict[str, Dict[str, str]] = {}
 
     async def _get_sip_settings(self) -> Optional[SIPSettings]:
         """Load SIP settings from database."""
@@ -406,9 +433,24 @@ class DialerEngine:
         """Process active campaigns and initiate calls."""
         logger.info("Starting campaign processing loop...")
 
+        # Initialize call manager
+        if CALL_MANAGER_AVAILABLE:
+            self.call_manager = ConcurrentCallManager(
+                global_max_concurrent=self.global_max_concurrent,
+                call_initiator=self._make_campaign_call
+            )
+            await self.call_manager.start_processing()
+            logger.info(f"Call manager initialized with max {self.global_max_concurrent} concurrent calls")
+        else:
+            logger.warning("Call manager not available, concurrent call management disabled")
+
         # Start Redis listener for test calls
         asyncio.create_task(self._listen_for_test_calls())
 
+        # Start call monitor task
+        asyncio.create_task(self._monitor_active_calls())
+
+        status_publish_counter = 0
         while self.running:
             try:
                 # Check if still registered
@@ -417,18 +459,401 @@ class DialerEngine:
                     await asyncio.sleep(5)
                     continue
 
-                # TODO: Implement campaign processing
-                # 1. Query database for active campaigns
-                # 2. Get contacts to dial based on campaign settings
-                # 3. Check concurrent call limits
-                # 4. Initiate calls
+                # Process active campaigns
+                await self._process_active_campaigns()
 
-                # For now, just sleep
-                await asyncio.sleep(1)
+                # Publish call manager status periodically (every 5 iterations)
+                status_publish_counter += 1
+                if status_publish_counter >= 5:
+                    await self._publish_call_manager_status()
+                    status_publish_counter = 0
+
+                # Wait before next poll
+                await asyncio.sleep(self.campaign_poll_interval)
 
             except Exception as e:
                 logger.error(f"Error processing campaigns: {e}")
+                import traceback
+                traceback.print_exc()
                 await asyncio.sleep(5)
+
+    async def _process_active_campaigns(self):
+        """Query and process all active campaigns."""
+        engine = create_async_engine(self.db_url)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        try:
+            async with async_session() as session:
+                # Get all running campaigns
+                result = await session.execute(
+                    select(Campaign)
+                    .where(Campaign.status == CampaignStatus.RUNNING)
+                    .options(selectinload(Campaign.ivr_flow))
+                )
+                campaigns = result.scalars().all()
+
+                for campaign in campaigns:
+                    await self._process_single_campaign(session, campaign)
+
+        except Exception as e:
+            logger.error(f"Error querying campaigns: {e}")
+        finally:
+            await engine.dispose()
+
+    async def _process_single_campaign(self, session: AsyncSession, campaign: Campaign):
+        """Process a single campaign - fetch contacts and queue calls."""
+        if not self.call_manager:
+            return
+
+        # Register campaign with call manager (updates settings if already registered)
+        self.call_manager.register_campaign(
+            campaign_id=campaign.id,
+            max_concurrent_calls=campaign.max_concurrent_calls,
+            calls_per_minute=campaign.calls_per_minute
+        )
+
+        # Check if we have available slots for this campaign
+        available_slots = self.call_manager.get_available_slots(campaign.id)
+        if available_slots <= 0:
+            return
+
+        # Check calling hours
+        if not self._is_within_calling_hours(campaign):
+            return
+
+        # Get pending contacts that are ready to be called
+        contacts_to_dial = await self._get_pending_contacts(
+            session, campaign, limit=available_slots
+        )
+
+        if not contacts_to_dial:
+            # Check if campaign is complete
+            await self._check_campaign_completion(session, campaign)
+            return
+
+        # Get IVR flow definition if available
+        ivr_flow_definition = None
+        if campaign.ivr_flow and campaign.ivr_flow.active_version_id:
+            # Get the active version's definition
+            version_result = await session.execute(
+                select(IVRFlowVersion).where(
+                    IVRFlowVersion.id == campaign.ivr_flow.active_version_id
+                )
+            )
+            active_version = version_result.scalar_one_or_none()
+            if active_version:
+                ivr_flow_definition = active_version.definition
+
+        # Queue contacts for dialing
+        pending_contacts = []
+        for cc, contact in contacts_to_dial:
+            # Mark contact as in-progress
+            cc.status = ContactStatus.IN_PROGRESS
+            cc.attempts += 1
+            cc.last_attempt_at = datetime.utcnow()
+
+            pending_contact = PendingContact(
+                campaign_id=campaign.id,
+                campaign_contact_id=cc.id,
+                contact_id=contact.id,
+                phone_number=contact.phone_number_e164 or contact.phone_number,
+                caller_id="",  # Use default caller ID from SIP settings
+                ivr_flow_definition=ivr_flow_definition,
+                priority=cc.priority,
+                attempts=cc.attempts
+            )
+            pending_contacts.append(pending_contact)
+
+        await session.commit()
+
+        # Add to call manager queue
+        if pending_contacts:
+            await self.call_manager.add_contacts_to_queue(pending_contacts)
+            logger.info(
+                f"Campaign {campaign.name}: Queued {len(pending_contacts)} contacts, "
+                f"available slots: {available_slots}"
+            )
+
+    def _is_within_calling_hours(self, campaign: Campaign) -> bool:
+        """Check if current time is within campaign calling hours."""
+        now = datetime.utcnow()
+        current_time = now.time()
+
+        start_time = campaign.calling_hours_start
+        end_time = campaign.calling_hours_end
+
+        # Handle overnight calling windows (e.g., 22:00 to 06:00)
+        if start_time <= end_time:
+            return start_time <= current_time <= end_time
+        else:
+            return current_time >= start_time or current_time <= end_time
+
+    async def _get_pending_contacts(
+        self,
+        session: AsyncSession,
+        campaign: Campaign,
+        limit: int
+    ) -> List[tuple]:
+        """Get pending contacts ready to be dialed."""
+        now = datetime.utcnow()
+
+        # Query for contacts that are:
+        # 1. PENDING status, OR
+        # 2. FAILED/IN_PROGRESS with retry scheduled (next_attempt_at <= now)
+        # AND haven't exceeded max retries
+        query = (
+            select(CampaignContact, Contact)
+            .join(Contact, CampaignContact.contact_id == Contact.id)
+            .where(
+                and_(
+                    CampaignContact.campaign_id == campaign.id,
+                    or_(
+                        CampaignContact.status == ContactStatus.PENDING,
+                        and_(
+                            CampaignContact.status.in_([ContactStatus.FAILED, ContactStatus.IN_PROGRESS]),
+                            CampaignContact.next_attempt_at <= now,
+                            CampaignContact.attempts < campaign.max_retries + 1
+                        )
+                    )
+                )
+            )
+            .order_by(CampaignContact.priority, CampaignContact.created_at)
+            .limit(limit)
+        )
+
+        result = await session.execute(query)
+        return result.all()
+
+    async def _check_campaign_completion(self, session: AsyncSession, campaign: Campaign):
+        """Check if a campaign has completed all contacts."""
+        from sqlalchemy import func
+
+        # Count remaining contacts to process
+        remaining = await session.execute(
+            select(func.count())
+            .where(
+                and_(
+                    CampaignContact.campaign_id == campaign.id,
+                    CampaignContact.status.in_([
+                        ContactStatus.PENDING,
+                        ContactStatus.IN_PROGRESS
+                    ])
+                )
+            )
+        )
+        remaining_count = remaining.scalar() or 0
+
+        if remaining_count == 0:
+            # Mark campaign as completed
+            campaign.status = CampaignStatus.COMPLETED
+            campaign.completed_at = datetime.utcnow()
+            await session.commit()
+
+            # Unregister from call manager
+            if self.call_manager:
+                self.call_manager.unregister_campaign(campaign.id)
+
+            logger.info(f"Campaign {campaign.name} completed - all contacts processed")
+
+            # Publish completion event
+            await self._publish_campaign_event(campaign.id, "completed")
+
+    async def _make_campaign_call(
+        self,
+        destination: str,
+        caller_id: str,
+        ivr_flow_definition: Optional[Dict],
+        campaign_id: str,
+        contact_id: str,
+        campaign_contact_id: str
+    ) -> Optional["SIPCall"]:
+        """Make a call for a campaign contact (called by call manager)."""
+        call = await self.make_call(
+            destination=destination,
+            caller_id=caller_id,
+            ivr_flow_definition=ivr_flow_definition,
+            campaign_id=campaign_id,
+            contact_id=contact_id
+        )
+
+        if call:
+            # Track this call for result updates
+            self._call_contacts[call.info.call_id] = {
+                "campaign_id": campaign_id,
+                "contact_id": contact_id,
+                "campaign_contact_id": campaign_contact_id
+            }
+
+        return call
+
+    async def _monitor_active_calls(self):
+        """Monitor active calls and update their status."""
+        logger.info("Starting active call monitor...")
+
+        while self.running:
+            try:
+                # Check each active call
+                completed_calls = []
+
+                for call_id, call in list(self.active_calls.items()):
+                    try:
+                        state = call.state if hasattr(call, 'state') else call.info.state
+
+                        if state in (CallState.DISCONNECTED, CallState.FAILED):
+                            completed_calls.append((call_id, call, state))
+                    except Exception as e:
+                        logger.error(f"Error checking call {call_id}: {e}")
+
+                # Process completed calls
+                for call_id, call, state in completed_calls:
+                    await self._handle_call_completed(call_id, call, state)
+
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                logger.error(f"Error in call monitor: {e}")
+                await asyncio.sleep(1)
+
+    async def _handle_call_completed(self, call_id: str, call: "SIPCall", state):
+        """Handle a completed call - update database and call manager."""
+        # Remove from active calls
+        self.active_calls.pop(call_id, None)
+
+        # Get contact info
+        contact_info = self._call_contacts.pop(call_id, None)
+
+        # Notify call manager
+        if self.call_manager:
+            success = state != CallState.FAILED
+            await self.call_manager.record_call_end(call_id, success)
+
+        # Update database
+        if contact_info:
+            await self._update_call_result(
+                campaign_contact_id=contact_info["campaign_contact_id"],
+                call_id=call_id,
+                state=state,
+                call=call
+            )
+
+        logger.debug(f"Call {call_id} completed with state {state}")
+
+    async def _update_call_result(
+        self,
+        campaign_contact_id: str,
+        call_id: str,
+        state,
+        call: "SIPCall"
+    ):
+        """Update the campaign contact with call result."""
+        engine = create_async_engine(self.db_url)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    select(CampaignContact)
+                    .options(selectinload(CampaignContact.campaign))
+                    .where(CampaignContact.id == campaign_contact_id)
+                )
+                cc = result.scalar_one_or_none()
+
+                if not cc:
+                    return
+
+                campaign = cc.campaign
+
+                # Determine disposition based on state
+                # TODO: Add AMD detection result here
+                if state == CallState.DISCONNECTED:
+                    # Call was answered and completed
+                    disposition = CallDisposition.ANSWERED_HUMAN
+                    cc.status = ContactStatus.COMPLETED
+                    campaign.contacts_answered += 1
+                    campaign.contacts_completed += 1
+                elif state == CallState.FAILED:
+                    # Call failed - determine reason
+                    # This could be NO_ANSWER, BUSY, etc based on SIP response
+                    disposition = CallDisposition.NO_ANSWER
+                    cc.last_disposition = disposition
+
+                    # Check if we should retry
+                    if cc.attempts < campaign.max_retries + 1:
+                        # Schedule retry
+                        if (disposition == CallDisposition.NO_ANSWER and campaign.retry_on_no_answer) or \
+                           (disposition == CallDisposition.BUSY and campaign.retry_on_busy) or \
+                           campaign.retry_on_failed:
+                            cc.status = ContactStatus.PENDING
+                            cc.next_attempt_at = datetime.utcnow() + timedelta(
+                                minutes=campaign.retry_delay_minutes
+                            )
+                        else:
+                            cc.status = ContactStatus.FAILED
+                            campaign.contacts_completed += 1
+                    else:
+                        cc.status = ContactStatus.FAILED
+                        campaign.contacts_completed += 1
+                else:
+                    disposition = CallDisposition.FAILED
+                    cc.status = ContactStatus.FAILED
+
+                cc.last_disposition = disposition
+                campaign.contacts_called += 1
+
+                await session.commit()
+
+        except Exception as e:
+            logger.error(f"Error updating call result: {e}")
+        finally:
+            await engine.dispose()
+
+    async def _publish_campaign_event(self, campaign_id: str, event_type: str):
+        """Publish campaign event to Redis for WebSocket clients."""
+        import redis.asyncio as redis
+        import json
+
+        try:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            r = redis.from_url(redis_url)
+
+            message = json.dumps({
+                "type": f"campaign.{event_type}",
+                "data": {
+                    "campaign_id": campaign_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
+
+            await r.publish("ws:campaigns", message)
+            await r.aclose()
+
+        except Exception as e:
+            logger.error(f"Failed to publish campaign event: {e}")
+
+    async def _publish_call_manager_status(self):
+        """Publish call manager status to Redis for API access."""
+        if not self.call_manager:
+            return
+
+        import redis.asyncio as redis
+        import json
+
+        try:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            r = redis.from_url(redis_url)
+
+            status = self.call_manager.get_status()
+            status["last_updated"] = datetime.utcnow().isoformat()
+
+            await r.set(
+                "dialer:call_manager_status",
+                json.dumps(status),
+                ex=30  # Expire after 30 seconds
+            )
+            await r.aclose()
+
+        except Exception as e:
+            logger.error(f"Failed to publish call manager status: {e}")
 
     async def _listen_for_test_calls(self):
         """Listen for test call requests via Redis."""
@@ -646,6 +1071,11 @@ class DialerEngine:
         """Stop the dialer engine."""
         logger.info("Stopping Dialer Engine...")
         self.running = False
+
+        # Stop call manager
+        if self.call_manager:
+            await self.call_manager.stop_processing()
+            self.call_manager = None
 
         # Hang up all active calls
         for call_id in list(self.active_calls.keys()):

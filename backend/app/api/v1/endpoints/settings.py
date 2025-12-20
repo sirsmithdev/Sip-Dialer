@@ -154,6 +154,56 @@ async def test_sip_connection(
     return await test_service.test_sip_connection(settings)
 
 
+@router.get("/dialer/status")
+async def get_dialer_status(
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.MANAGER))
+):
+    """
+    Get the current status of the dialer engine and call manager.
+
+    Returns:
+    - SIP registration status
+    - Active calls count
+    - Call manager status (concurrent calls per campaign)
+    """
+    import redis.asyncio as redis_async
+    import json
+    from app.config import settings as app_settings
+
+    try:
+        r = redis_async.from_url(app_settings.redis_url)
+
+        # Get SIP status
+        sip_status_data = await r.get("dialer:sip_status")
+        sip_status = json.loads(sip_status_data) if sip_status_data else None
+
+        # Get call manager status (if available)
+        call_manager_data = await r.get("dialer:call_manager_status")
+        call_manager_status = json.loads(call_manager_data) if call_manager_data else None
+
+        await r.aclose()
+
+        return {
+            "sip": sip_status or {
+                "status": "unknown",
+                "message": "Dialer engine not running or not connected"
+            },
+            "call_manager": call_manager_status,
+            "is_online": sip_status and sip_status.get("status") == "registered"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get dialer status: {e}")
+        return {
+            "sip": {
+                "status": "error",
+                "message": f"Failed to get status: {str(e)}"
+            },
+            "call_manager": None,
+            "is_online": False
+        }
+
+
 @router.delete("/sip", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_sip_settings(
     db: AsyncSession = Depends(get_db),

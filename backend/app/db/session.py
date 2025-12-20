@@ -1,9 +1,12 @@
 """
 Database session management.
 """
-from typing import AsyncGenerator
+from contextlib import contextmanager
+from typing import AsyncGenerator, Generator
 
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 
@@ -26,6 +29,25 @@ async_session_maker = async_sessionmaker(
     autoflush=False,
 )
 
+# Create sync engine for Celery tasks (convert asyncpg URL to psycopg2)
+sync_database_url = settings.database_url.replace("+asyncpg", "")
+sync_engine = create_engine(
+    sync_database_url,
+    echo=settings.debug,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
+)
+
+# Create sync session factory
+sync_session_maker = sessionmaker(
+    sync_engine,
+    class_=Session,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency to get database session."""
@@ -38,3 +60,17 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+@contextmanager
+def get_sync_session() -> Generator[Session, None, None]:
+    """Context manager for synchronous database session (for Celery tasks)."""
+    session = sync_session_maker()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

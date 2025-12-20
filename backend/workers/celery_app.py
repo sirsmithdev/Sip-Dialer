@@ -38,6 +38,10 @@ app.conf.update(
             "task": "workers.tasks.campaign_tasks.check_scheduled_campaigns",
             "schedule": 60.0,  # Every 60 seconds
         },
+        "check-campaign-end-times": {
+            "task": "workers.tasks.campaign_tasks.check_campaign_end_times",
+            "schedule": 60.0,  # Every 60 seconds
+        },
         "cleanup-stale-calls": {
             "task": "workers.tasks.campaign_tasks.cleanup_stale_calls",
             "schedule": 300.0,  # Every 5 minutes
