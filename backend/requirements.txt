@@ -39,10 +39,12 @@ minio==7.2.3
 boto3==1.34.14
 
 # =============================================================================
-# SIP/VoIP (Direct PJSIP calling - no external dependencies)
+# SIP/VoIP - PJSUA2 (PJSIP Python bindings)
 # =============================================================================
-# The SIP client is implemented using Python's built-in socket library.
-# No external SIP libraries required for basic UDP signaling.
+# PJSUA2 provides full SIP stack with RTP media handling for Grandstream UCM.
+# Note: On Windows, you may need to build PJSIP from source or use pre-built wheels.
+# Install via: pip install pjsua2 (or build from https://github.com/pjsip/pjproject)
+# pjsua2>=2.14
 
 # =============================================================================
 # File Processing

@@ -53,14 +53,6 @@ class Settings(BaseSettings):
     minio_bucket_recordings: str = "call-recordings"
 
     # ==========================================================================
-    # Grandstream UCM6302 - AMI Settings
-    # ==========================================================================
-    ami_host: str = "192.168.1.100"
-    ami_port: int = 5038
-    ami_username: str = "autodialer_ami"
-    ami_password: str = ""
-
-    # ==========================================================================
     # Default SIP Settings (configurable via UI)
     # ==========================================================================
     sip_server: str = "192.168.1.100"

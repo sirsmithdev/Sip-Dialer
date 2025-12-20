@@ -40,6 +40,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-in-production}
       - JWT_ALGORITHM=HS256
       - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-mpFiayUlJ3n6lp5Us2NvkiMQw2-LHhksBTnY-wvTEJ4=}
     networks:
       - frontend_net
       - backend_net
@@ -51,30 +52,46 @@ services:
     restart: unless-stopped
 
   # =============================================================================
-  # DIALER ENGINE (Direct SIP/PJSIP Calling)
+  # DIALER ENGINE (Direct SIP/PJSIP Calling with PJSUA2)
+  # =============================================================================
+  # This container runs the SIP auto-dialer that registers with Grandstream UCM
+  # as a PJSIP extension. It uses network_mode: host to allow direct UDP
+  # communication with the UCM on the local network.
   # =============================================================================
   dialer-engine:
     build:
       context: ./backend
       dockerfile: ../docker/dialer-engine/Dockerfile
     container_name: autodialer-dialer
+    # Use host network for direct SIP/RTP communication with UCM
+    # This avoids NAT issues with SIP and RTP ports
+    network_mode: host
     environment:
-      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@postgresql:5432/autodialer
-      - REDIS_URL=redis://redis:6379/0
+      # Database connection (use localhost since we're on host network)
+      - DATABASE_URL=postgresql+asyncpg://autodialer:autodialer_secret@localhost:5432/autodialer
+      - REDIS_URL=redis://localhost:6379/0
+      # Encryption key for decrypting SIP password (must match api-gateway)
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-mpFiayUlJ3n6lp5Us2NvkiMQw2-LHhksBTnY-wvTEJ4=}
       # SIP settings are loaded from database (sip_settings table)
-      # Local SIP port for RTP media
+      # Local SIP port - must not conflict with UCM (UCM uses 5060)
       - LOCAL_SIP_PORT=${LOCAL_SIP_PORT:-5061}
-    ports:
-      - "5061:5061/udp"   # Local SIP port for signaling
-      - "10000-10100:10000-10100/udp"  # RTP port range
-    networks:
-      - backend_net
+      # Audio file storage path
+      - AUDIO_BASE_PATH=/var/lib/autodialer/audio
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Mount audio files directory
+      - audio_files:/var/lib/autodialer/audio:ro
     depends_on:
       postgresql:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # Note: With network_mode: host, ports are not needed as the container
+    # uses the host's network directly. The dialer will bind to:
+    # - UDP 5061: SIP signaling
+    # - UDP 10000-20000: RTP media (configured in SIP settings)
 
   # =============================================================================
   # AGI SERVER (FastAGI for IVR)
@@ -239,3 +256,4 @@ volumes:
   postgresql_data:
   redis_data:
   minio_data:
+  audio_files:
