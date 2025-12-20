@@ -1,13 +1,16 @@
 """
 Connection Test Service for SIP/PJSIP.
 """
+import json
 import logging
 import socket
 import time
 from typing import Optional
 
+import redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings as app_settings
 from app.models.sip_settings import SIPSettings
 from app.schemas.sip_settings import SIPConnectionTestResponse
 
@@ -33,6 +36,27 @@ class ConnectionTestService:
     def __init__(self, db: AsyncSession, app_logger: logging.Logger):
         self.db = db
         self.logger = app_logger
+        self._redis_client = None
+
+    def _get_redis_client(self):
+        """Get Redis client for checking dialer status."""
+        if self._redis_client is None:
+            self._redis_client = redis.Redis.from_url(
+                app_settings.redis_url,
+                decode_responses=True
+            )
+        return self._redis_client
+
+    def _get_dialer_status(self) -> Optional[dict]:
+        """Get the current dialer SIP status from Redis."""
+        try:
+            client = self._get_redis_client()
+            status_data = client.get("dialer:sip_status")
+            if status_data:
+                return json.loads(status_data)
+        except Exception as e:
+            self.logger.warning(f"Failed to get dialer status from Redis: {e}")
+        return None
 
     def _get_diagnostic_hint(self, error_message: str) -> Optional[str]:
         """Get a user-friendly diagnostic hint based on error message."""
@@ -170,21 +194,55 @@ class ConnectionTestService:
             except socket.timeout:
                 sock.close()
                 timing_ms = int((time.time() - start_time) * 1000)
-                error_msg = "No SIP response received (timeout after 5 seconds)"
                 self.logger.warning(f"SIP OPTIONS request - no response received")
 
-                test_steps.append(f"✗ {error_msg}")
+                # Check if the dialer is actually registered (many PBXes don't respond to OPTIONS)
+                dialer_status = self._get_dialer_status()
+                if dialer_status and dialer_status.get("status") == "registered":
+                    # Dialer is registered, so the connection is actually working
+                    test_steps.append("⚠ No OPTIONS response (some PBXes don't respond to OPTIONS)")
+                    test_steps.append(f"✓ Dialer engine is registered as extension {dialer_status.get('extension', 'unknown')}")
+                    if dialer_status.get("active_calls", 0) > 0:
+                        test_steps.append(f"✓ {dialer_status['active_calls']} active call(s)")
 
-                return SIPConnectionTestResponse(
-                    success=False,
-                    message=error_msg,
-                    details={"host": sip_server, "port": sip_port},
-                    timing_ms=timing_ms,
-                    resolved_ip=resolved_ip,
-                    test_steps=test_steps,
-                    registered=False,
-                    diagnostic_hint=self._get_diagnostic_hint("No SIP response")
-                )
+                    return SIPConnectionTestResponse(
+                        success=True,
+                        message=f"SIP connection verified - dialer is registered (extension {dialer_status.get('extension', 'unknown')})",
+                        details={
+                            "host": sip_server,
+                            "port": sip_port,
+                            "extension": dialer_status.get("extension"),
+                            "active_calls": dialer_status.get("active_calls", 0),
+                            "note": "OPTIONS timeout but dialer registration confirmed"
+                        },
+                        timing_ms=timing_ms,
+                        resolved_ip=resolved_ip,
+                        test_steps=test_steps,
+                        server_info={"dialer_status": dialer_status.get("status")},
+                        registered=True,
+                        diagnostic_hint=None
+                    )
+                else:
+                    # Dialer not registered and no OPTIONS response
+                    error_msg = "No SIP response received (timeout after 5 seconds)"
+                    test_steps.append(f"✗ {error_msg}")
+
+                    # Add dialer status info if available
+                    if dialer_status:
+                        test_steps.append(f"⚠ Dialer status: {dialer_status.get('status', 'unknown')}")
+                        if dialer_status.get("error"):
+                            test_steps.append(f"⚠ Dialer error: {dialer_status.get('error')}")
+
+                    return SIPConnectionTestResponse(
+                        success=False,
+                        message=error_msg,
+                        details={"host": sip_server, "port": sip_port},
+                        timing_ms=timing_ms,
+                        resolved_ip=resolved_ip,
+                        test_steps=test_steps,
+                        registered=False,
+                        diagnostic_hint=self._get_diagnostic_hint("No SIP response")
+                    )
 
             except Exception as e:
                 sock.close()

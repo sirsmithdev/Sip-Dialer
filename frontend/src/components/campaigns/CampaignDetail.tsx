@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   Users,
   CheckCircle2,
   AlertCircle,
+  Wifi,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,6 +33,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { campaignsApi } from '@/services/api';
 import { CampaignStatusBadge } from './CampaignStatusBadge';
+import { useCampaignProgress } from '@/contexts/WebSocketContext';
 import type { ContactStatus } from '@/types';
 
 interface CampaignDetailProps {
@@ -56,19 +58,30 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Fetch campaign details
+  // WebSocket real-time progress updates
+  const wsProgress = useCampaignProgress(campaignId);
+
+  // Fetch campaign details - reduce polling frequency since we have WebSocket
   const { data: campaign, isLoading: campaignLoading } = useQuery({
     queryKey: ['campaign', campaignId],
     queryFn: () => campaignsApi.get(campaignId),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 5000 : false),
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 15000 : false), // Reduced from 5s to 15s
   });
 
-  // Fetch campaign stats
+  // Fetch campaign stats - reduce polling frequency since we have WebSocket
   const { data: stats } = useQuery({
     queryKey: ['campaign-stats', campaignId],
     queryFn: () => campaignsApi.getStats(campaignId),
-    refetchInterval: () => (campaign?.status === 'running' ? 5000 : false),
+    refetchInterval: () => (campaign?.status === 'running' ? 15000 : false), // Reduced from 5s to 15s
   });
+
+  // Invalidate queries when WebSocket updates indicate status change
+  useEffect(() => {
+    if (wsProgress && wsProgress.status !== campaign?.status) {
+      queryClient.invalidateQueries({ queryKey: ['campaign', campaignId] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+    }
+  }, [wsProgress?.status, campaign?.status, campaignId, queryClient]);
 
   // Fetch campaign contacts
   const { data: contactsData, isLoading: contactsLoading } = useQuery({
@@ -149,9 +162,16 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
     campaign.status === 'paused';
   const canEdit = campaign.status === 'draft';
 
+  // Use WebSocket data if available, otherwise fall back to API data
+  const totalContacts = wsProgress?.total_contacts ?? stats?.total_contacts ?? campaign.total_contacts;
+  const contactsCompleted = wsProgress?.contacts_completed ?? campaign.contacts_completed;
+  const contactsCalled = wsProgress?.contacts_called ?? stats?.total_calls ?? campaign.contacts_called;
+  const contactsAnswered = wsProgress?.contacts_answered ?? (stats ? (stats.answered_human + stats.answered_machine) : 0);
+  const answerRate = wsProgress?.answer_rate ?? stats?.answer_rate ?? 0;
+
   const getProgress = () => {
-    if (campaign.total_contacts === 0) return 0;
-    return Math.round((campaign.contacts_completed / campaign.total_contacts) * 100);
+    if (totalContacts === 0) return 0;
+    return Math.round((contactsCompleted / totalContacts) * 100);
   };
 
   return (
@@ -213,8 +233,14 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
         <CardContent>
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span>
-                {campaign.contacts_completed} / {campaign.total_contacts} contacts completed
+              <span className="flex items-center gap-2">
+                {contactsCompleted} / {totalContacts} contacts completed
+                {wsProgress && (
+                  <span className="flex items-center gap-1 text-xs text-green-600">
+                    <Wifi className="w-3 h-3" />
+                    Live
+                  </span>
+                )}
               </span>
               <span className="font-medium">{getProgress()}%</span>
             </div>
@@ -231,7 +257,7 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.total_contacts || campaign.total_contacts}</div>
+            <div className="text-2xl font-bold">{totalContacts}</div>
           </CardContent>
         </Card>
 
@@ -241,7 +267,7 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
             <Phone className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.total_calls || campaign.contacts_called}</div>
+            <div className="text-2xl font-bold">{contactsCalled}</div>
           </CardContent>
         </Card>
 
@@ -251,17 +277,17 @@ export function CampaignDetail({ campaignId, onBack, onEdit }: CampaignDetailPro
             <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.answer_rate || 0}%</div>
+            <div className="text-2xl font-bold">{answerRate.toFixed(1)}%</div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Human Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">Answered</CardTitle>
             <AlertCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.human_rate || 0}%</div>
+            <div className="text-2xl font-bold">{contactsAnswered}</div>
           </CardContent>
         </Card>
       </div>

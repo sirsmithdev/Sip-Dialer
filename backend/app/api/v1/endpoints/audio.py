@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_db, require_roles
 from app.schemas.audio import (
@@ -344,4 +345,11 @@ async def delete_audio_file(
             detail="Audio file not found"
         )
 
-    await service.delete(audio_file)
+    try:
+        await service.delete(audio_file)
+    except IntegrityError as e:
+        logger.warning(f"Cannot delete audio file {audio_id}: still in use by campaigns")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete audio file: it is currently being used by one or more campaigns. Please remove it from all campaigns first."
+        )

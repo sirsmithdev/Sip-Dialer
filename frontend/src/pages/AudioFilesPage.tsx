@@ -437,7 +437,8 @@ export function AudioFilesPage() {
           </DialogFooter>
           {deleteMutation.error && (
             <p className="text-sm text-red-600 mt-2">
-              Failed to delete file. Please try again.
+              {(deleteMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+                'Failed to delete file. Please try again.'}
             </p>
           )}
         </DialogContent>

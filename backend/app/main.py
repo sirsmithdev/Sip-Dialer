@@ -1,6 +1,7 @@
 """
 SIP Auto-Dialer API - Main Application Entry Point
 """
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,8 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.v1.router import api_router
+from app.api.websocket_manager import manager as ws_manager
 from app.db.session import engine
 from app.db.base import Base
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -20,9 +24,14 @@ async def lifespan(app: FastAPI):
     # async with engine.begin() as conn:
     #     await conn.run_sync(Base.metadata.create_all)
 
+    # Start WebSocket Redis subscriber
+    await ws_manager.start_redis_subscriber()
+    logger.info("WebSocket Redis subscriber started")
+
     yield
 
     # Shutdown
+    await ws_manager.stop_redis_subscriber()
     await engine.dispose()
 
 

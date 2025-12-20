@@ -1,7 +1,10 @@
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
+import { useWebSocketContext, useSIPStatus } from '@/contexts/WebSocketContext';
 import { useNavigate } from 'react-router-dom';
+import { campaignsApi } from '@/services/api';
 import {
   Phone,
   PhoneOutgoing,
@@ -15,16 +18,79 @@ import {
   Activity,
   Users,
   Clock,
+  Wifi,
+  WifiOff,
+  AlertCircle,
 } from 'lucide-react';
+
+function SIPStatusIndicator() {
+  const sipStatus = useSIPStatus();
+  const { isConnected: wsConnected } = useWebSocketContext();
+
+  if (!wsConnected) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-sm">
+        <WifiOff className="w-4 h-4" />
+        <span>Connecting...</span>
+      </div>
+    );
+  }
+
+  if (!sipStatus) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-sm">
+        <AlertCircle className="w-4 h-4" />
+        <span>SIP Unknown</span>
+      </div>
+    );
+  }
+
+  const statusColors: Record<string, { bg: string; text: string; dot: string }> = {
+    registered: { bg: 'bg-green-500/10', text: 'text-green-600', dot: 'bg-green-500' },
+    connecting: { bg: 'bg-yellow-500/10', text: 'text-yellow-600', dot: 'bg-yellow-500' },
+    disconnected: { bg: 'bg-gray-500/10', text: 'text-gray-600', dot: 'bg-gray-500' },
+    failed: { bg: 'bg-red-500/10', text: 'text-red-600', dot: 'bg-red-500' },
+  };
+
+  const colors = statusColors[sipStatus.status] || statusColors.disconnected;
+
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${colors.bg} ${colors.text} text-sm`}>
+      <span className={`w-2 h-2 rounded-full ${colors.dot} ${sipStatus.status === 'registered' ? 'animate-pulse' : ''}`} />
+      <Wifi className="w-4 h-4" />
+      <span className="capitalize">{sipStatus.status}</span>
+      {sipStatus.extension && <span className="opacity-75">({sipStatus.extension})</span>}
+      {sipStatus.active_calls > 0 && (
+        <span className="ml-1 px-1.5 py-0.5 bg-primary/20 rounded text-xs">
+          {sipStatus.active_calls} call{sipStatus.active_calls > 1 ? 's' : ''}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { dashboardStats } = useWebSocketContext();
 
+  // Fetch campaigns for stats
+  const { data: campaignsData } = useQuery({
+    queryKey: ['campaigns-stats'],
+    queryFn: () => campaignsApi.list({ page: 1, page_size: 100 }),
+    refetchInterval: 30000, // Fallback polling every 30s
+  });
+
+  // Calculate stats from data
+  const campaigns = campaignsData?.items || [];
+  const activeCampaigns = campaigns.filter((c) => c.status === 'running').length;
+  const completedCampaigns = campaigns.filter((c) => c.status === 'completed').length;
+
+  // Use WebSocket stats if available, otherwise use calculated values
   const stats = [
     {
       title: 'Active Campaigns',
-      value: '0',
+      value: String(dashboardStats?.active_campaigns ?? activeCampaigns),
       description: 'Currently running',
       icon: Phone,
       color: 'text-green-500',
@@ -32,7 +98,7 @@ export function DashboardPage() {
     },
     {
       title: 'Calls Today',
-      value: '0',
+      value: String(dashboardStats?.calls_today ?? 0),
       description: 'Total outbound calls',
       icon: PhoneOutgoing,
       color: 'text-blue-500',
@@ -40,16 +106,16 @@ export function DashboardPage() {
     },
     {
       title: 'Answer Rate',
-      value: '0%',
+      value: `${(dashboardStats?.answer_rate ?? 0).toFixed(1)}%`,
       description: "Today's performance",
       icon: TrendingUp,
       color: 'text-purple-500',
       bgColor: 'bg-purple-500/10',
     },
     {
-      title: 'Surveys Completed',
-      value: '0',
-      description: "Today's surveys",
+      title: 'Calls Answered',
+      value: String(dashboardStats?.calls_answered ?? 0),
+      description: "Today's answered",
       icon: CheckCircle2,
       color: 'text-orange-500',
       bgColor: 'bg-orange-500/10',
@@ -77,7 +143,7 @@ export function DashboardPage() {
       title: 'Configure IVR',
       description: 'Design your interactive voice response flow',
       icon: Settings,
-      onClick: () => navigate('/settings'),
+      onClick: () => navigate('/ivr'),
       color: 'text-green-500',
       bgColor: 'bg-green-500/10',
     },
@@ -94,14 +160,16 @@ export function DashboardPage() {
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <span className="status-dot status-active" />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-bold">Dashboard</h1>
+          </div>
+          <p className="text-muted-foreground text-lg">
+            Welcome back, <span className="text-foreground font-medium">{user?.first_name || user?.email}</span>
+          </p>
         </div>
-        <p className="text-muted-foreground text-lg">
-          Welcome back, <span className="text-foreground font-medium">{user?.first_name || user?.email}</span>
-        </p>
+        <SIPStatusIndicator />
       </div>
 
       {/* Stats Grid */}
@@ -140,25 +208,51 @@ export function DashboardPage() {
                 <p className="text-sm text-muted-foreground">Your latest campaign activity</p>
               </div>
             </div>
-            <Button variant="ghost" size="sm" className="text-primary">
+            <Button variant="ghost" size="sm" className="text-primary" onClick={() => navigate('/campaigns')}>
               View All
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-                <Phone className="w-8 h-8 text-muted-foreground" />
+            {campaigns.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
+                  <Phone className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <h3 className="font-semibold mb-2">No campaigns yet</h3>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  Create your first campaign to start making outbound calls and see activity here.
+                </p>
+                <Button className="mt-4 gradient-primary" onClick={() => navigate('/campaigns')}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create Campaign
+                </Button>
               </div>
-              <h3 className="font-semibold mb-2">No campaigns yet</h3>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                Create your first campaign to start making outbound calls and see activity here.
-              </p>
-              <Button className="mt-4 gradient-primary" onClick={() => navigate('/campaigns')}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Campaign
-              </Button>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                {campaigns.slice(0, 5).map((campaign) => (
+                  <div
+                    key={campaign.id}
+                    className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer transition-colors"
+                    onClick={() => navigate('/campaigns')}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full ${
+                        campaign.status === 'running' ? 'bg-green-500 animate-pulse' :
+                        campaign.status === 'completed' ? 'bg-blue-500' :
+                        campaign.status === 'paused' ? 'bg-yellow-500' :
+                        'bg-gray-500'
+                      }`} />
+                      <div>
+                        <p className="font-medium text-sm">{campaign.name}</p>
+                        <p className="text-xs text-muted-foreground capitalize">{campaign.status}</p>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -210,7 +304,7 @@ export function DashboardPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Contacts</p>
-                <p className="text-2xl font-bold">0</p>
+                <p className="text-2xl font-bold">{dashboardStats?.total_contacts ?? 0}</p>
               </div>
             </div>
           </CardContent>
@@ -224,7 +318,7 @@ export function DashboardPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Completed Campaigns</p>
-                <p className="text-2xl font-bold">0</p>
+                <p className="text-2xl font-bold">{dashboardStats?.completed_campaigns ?? completedCampaigns}</p>
               </div>
             </div>
           </CardContent>
@@ -238,7 +332,7 @@ export function DashboardPage() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Avg. Call Duration</p>
-                <p className="text-2xl font-bold">0s</p>
+                <p className="text-2xl font-bold">{Math.round(dashboardStats?.avg_call_duration ?? 0)}s</p>
               </div>
             </div>
           </CardContent>

@@ -235,7 +235,10 @@ class DialerEngine:
         return False
 
     async def _update_connection_status(self, status: str, error: str = None):
-        """Update connection status in database."""
+        """Update connection status in database and publish to WebSocket."""
+        extension = None
+        server = None
+
         try:
             engine = create_async_engine(self.db_url)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -249,6 +252,8 @@ class DialerEngine:
                 if settings:
                     from app.models.sip_settings import ConnectionStatus
                     settings.connection_status = ConnectionStatus(status)
+                    extension = settings.sip_username
+                    server = settings.sip_server
                     if error:
                         settings.last_error = error
                     if status == "REGISTERED":
@@ -261,6 +266,59 @@ class DialerEngine:
             await engine.dispose()
         except Exception as e:
             logger.error(f"Failed to update connection status: {e}")
+
+        # Publish SIP status to WebSocket clients via Redis
+        await self._publish_sip_status(status, extension, server, error)
+
+    async def _publish_sip_status(
+        self,
+        status: str,
+        extension: str = None,
+        server: str = None,
+        error: str = None
+    ):
+        """Publish SIP status to WebSocket clients via Redis."""
+        import redis.asyncio as redis
+        import json
+        from datetime import datetime
+
+        try:
+            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            r = redis.from_url(redis_url)
+
+            active_calls = len(self.active_calls) if self.active_calls else 0
+
+            message = json.dumps({
+                "type": "sip.status",
+                "data": {
+                    "status": status.lower(),
+                    "extension": extension,
+                    "server": server,
+                    "active_calls": active_calls,
+                    "error": error,
+                    "last_updated": datetime.utcnow().isoformat()
+                }
+            })
+
+            # Publish to WebSocket subscribers
+            await r.publish("ws:sip_status", message)
+
+            # Also store in a key for direct access (e.g., connection test service)
+            status_data = json.dumps({
+                "status": status.lower(),
+                "extension": extension,
+                "server": server,
+                "active_calls": active_calls,
+                "error": error,
+                "last_updated": datetime.utcnow().isoformat()
+            })
+            await r.set("dialer:sip_status", status_data, ex=60)  # Expire after 60 seconds
+
+            logger.debug(f"Published SIP status: {status}")
+            await r.aclose()
+
+        except Exception as e:
+            logger.error(f"Failed to publish SIP status: {e}")
 
     async def _wait_for_shutdown(self):
         """Wait for shutdown signal when SIP is not available."""
@@ -347,6 +405,7 @@ class DialerEngine:
     async def _monitor_test_call(self, call, redis_client):
         """Monitor a test call and publish status updates."""
         import json
+        from datetime import datetime
 
         try:
             start_time = asyncio.get_event_loop().time()
@@ -355,14 +414,29 @@ class DialerEngine:
             while self.running:
                 state = call.state
                 elapsed = asyncio.get_event_loop().time() - start_time
+                state_str = state.value if hasattr(state, 'value') else str(state)
 
-                # Publish status update
+                # Publish status update to legacy channel
                 status = {
                     "call_id": call.call_id,
-                    "state": state.value if hasattr(state, 'value') else str(state),
+                    "state": state_str,
                     "elapsed": round(elapsed, 1)
                 }
                 await redis_client.publish("dialer:call_status", json.dumps(status))
+
+                # Also publish to WebSocket channel for frontend
+                ws_message = json.dumps({
+                    "type": "call.update",
+                    "data": {
+                        "call_id": call.call_id,
+                        "phone_number": getattr(call, 'destination', 'unknown'),
+                        "status": state_str,
+                        "direction": "outbound",
+                        "duration_seconds": int(elapsed),
+                        "started_at": datetime.utcnow().isoformat()
+                    }
+                })
+                await redis_client.publish("ws:calls", ws_message)
 
                 if state in (CallState.DISCONNECTED, CallState.FAILED):
                     logger.info(f"Test call {call.call_id} ended: {state}")
