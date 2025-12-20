@@ -11,19 +11,34 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
+import { usePermissions, Permission } from '@/hooks/use-permissions';
 
-const navigation = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  description: string;
+  permission?: Permission;
+}
+
+const navigation: NavItem[] = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard, description: 'Overview & stats' },
   { name: 'Campaigns', href: '/campaigns', icon: Phone, description: 'Manage campaigns' },
   { name: 'Contacts', href: '/contacts', icon: Users, description: 'Contact lists' },
-  { name: 'IVR Builder', href: '/ivr', icon: GitBranch, description: 'Voice flows' },
-  { name: 'Audio Files', href: '/audio', icon: Music, description: 'Voice prompts' },
-  { name: 'Settings', href: '/settings', icon: Settings, description: 'Configuration' },
+  { name: 'IVR Builder', href: '/ivr', icon: GitBranch, description: 'Voice flows', permission: 'ivr.access' },
+  { name: 'Audio Files', href: '/audio', icon: Music, description: 'Voice prompts', permission: 'audio.access' },
+  { name: 'Settings', href: '/settings', icon: Settings, description: 'Configuration', permission: 'settings.access' },
 ];
 
 export function Sidebar() {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { hasPermission, role } = usePermissions();
+
+  // Filter navigation based on permissions
+  const visibleNavigation = navigation.filter(
+    (item) => !item.permission || hasPermission(item.permission)
+  );
 
   return (
     <div className="flex h-full w-64 flex-col gradient-mesh border-r border-white/5">
@@ -43,7 +58,7 @@ export function Sidebar() {
         <p className="px-3 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
           Main Menu
         </p>
-        {navigation.map((item) => {
+        {visibleNavigation.map((item) => {
           const isActive = location.pathname === item.href ||
             (item.href !== '/' && location.pathname.startsWith(item.href));
 
@@ -92,9 +107,16 @@ export function Sidebar() {
             </span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">
-              {user?.first_name || 'User'}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-white truncate">
+                {user?.first_name || 'User'}
+              </p>
+              {role && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 capitalize">
+                  {role}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-gray-500 truncate">
               {user?.email || 'user@example.com'}
             </p>

@@ -77,6 +77,11 @@ services:
       - LOCAL_SIP_PORT=${LOCAL_SIP_PORT:-5061}
       # Audio file storage path
       - AUDIO_BASE_PATH=/var/lib/autodialer/audio
+      # MinIO configuration (use localhost since we're on host network)
+      - MINIO_ENDPOINT=localhost:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET_AUDIO=audio-files
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
@@ -190,8 +195,8 @@ services:
     networks:
       - backend_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autodialer -d autodialer"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U autodialer"]
+      interval: 5s
       timeout: 5s
       retries: 5
     restart: unless-stopped
@@ -202,35 +207,32 @@ services:
   redis:
     image: redis:7-alpine
     container_name: autodialer-redis
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
     ports:
       - "6379:6379"
     networks:
       - backend_net
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
   # =============================================================================
-  # MINIO (S3-Compatible Storage)
+  # MINIO (Object Storage for Audio Files)
   # =============================================================================
   minio:
     image: minio/minio:latest
     container_name: autodialer-minio
     command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
     volumes:
       - minio_data:/data
-    ports:
-      - "9000:9000"
-      - "9001:9001"  # MinIO Console
     networks:
       - backend_net
     healthcheck:
@@ -240,20 +242,13 @@ services:
       retries: 3
     restart: unless-stopped
 
-# =============================================================================
-# NETWORKS
-# =============================================================================
 networks:
   frontend_net:
     driver: bridge
   backend_net:
     driver: bridge
 
-# =============================================================================
-# VOLUMES
-# =============================================================================
 volumes:
   postgresql_data:
-  redis_data:
   minio_data:
   audio_files:

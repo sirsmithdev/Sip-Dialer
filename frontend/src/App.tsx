@@ -35,9 +35,30 @@ export function App() {
             <Route index element={<DashboardPage />} />
             <Route path="campaigns" element={<CampaignsPage />} />
             <Route path="contacts" element={<ContactsPage />} />
-            <Route path="ivr" element={<IvrBuilderPage />} />
-            <Route path="audio" element={<AudioFilesPage />} />
-            <Route path="settings" element={<SettingsPage />} />
+            <Route
+              path="ivr"
+              element={
+                <ProtectedRoute permission="ivr.access">
+                  <IvrBuilderPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="audio"
+              element={
+                <ProtectedRoute permission="audio.access">
+                  <AudioFilesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="settings"
+              element={
+                <ProtectedRoute permission="settings.access">
+                  <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
           </Route>
         </Routes>
       </WebSocketProvider>

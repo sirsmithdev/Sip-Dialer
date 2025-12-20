@@ -30,6 +30,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/use-permissions';
 import { contactsApi } from '@/services/api';
 import { ContactListsTable, ContactUploadDialog, ContactListDetail } from '@/components/contacts';
 import type { ContactList, DNCEntry } from '@/types';
@@ -49,6 +50,11 @@ export function ContactsPage() {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
+
+  // Permission checks
+  const canImport = hasPermission('contacts.import');
+  const canDelete = hasPermission('contacts.delete');
 
   // DNC List Query
   const { data: dncData, isLoading: dncLoading } = useQuery({
@@ -171,7 +177,7 @@ export function ContactsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          {activeTab === 'lists' && (
+          {activeTab === 'lists' && canImport && (
             <>
               <Button variant="outline" onClick={() => setShowCreateDialog(true)}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -183,7 +189,7 @@ export function ContactsPage() {
               </Button>
             </>
           )}
-          {activeTab === 'dnc' && (
+          {activeTab === 'dnc' && canImport && (
             <Button onClick={() => setShowDNCDialog(true)}>
               <Ban className="mr-2 h-4 w-4" />
               Add to DNC
@@ -257,22 +263,24 @@ export function ContactsPage() {
                           {new Date(entry.created_at).toLocaleDateString()}
                         </TableCell>
                         <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => removeDNCMutation.mutate(entry.id)}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Remove
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {canDelete && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onClick={() => removeDNCMutation.mutate(entry.id)}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Remove
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))

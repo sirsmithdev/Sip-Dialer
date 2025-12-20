@@ -17,11 +17,13 @@ from typing import Optional, Dict, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from minio import Minio
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.models.sip_settings import SIPSettings
+from app.models.audio import AudioFile
 
 # Import SIP engine components
 try:
@@ -89,8 +91,18 @@ class DialerEngine:
         # Local SIP port (different from UCM's 5060)
         self.local_sip_port = int(os.getenv("LOCAL_SIP_PORT", "5061"))
 
-        # Audio file base path
+        # Audio file base path (local cache)
         self.audio_base_path = os.getenv("AUDIO_BASE_PATH", "/var/lib/autodialer/audio")
+
+        # MinIO configuration
+        self.minio_endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+        self.minio_access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+        self.minio_secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+        self.minio_bucket = os.getenv("MINIO_BUCKET_AUDIO", "audio-files")
+        self.minio_client = None
+
+        # Audio file cache (maps audio_file_id to local path)
+        self._audio_cache: Dict[str, str] = {}
 
     async def _get_sip_settings(self) -> Optional[SIPSettings]:
         """Load SIP settings from database."""
@@ -117,10 +129,75 @@ class DialerEngine:
         await engine.dispose()
 
     def _resolve_audio_file(self, audio_file_id: str) -> str:
-        """Resolve audio file ID to filesystem path."""
-        # In production, this would look up the file in MinIO/S3 or database
-        # For now, assume files are stored locally
-        return os.path.join(self.audio_base_path, f"{audio_file_id}.wav")
+        """Resolve audio file ID to filesystem path, downloading from MinIO if needed."""
+        # Check cache first
+        if audio_file_id in self._audio_cache:
+            cached_path = self._audio_cache[audio_file_id]
+            if os.path.exists(cached_path):
+                return cached_path
+
+        # Ensure cache directory exists
+        os.makedirs(self.audio_base_path, exist_ok=True)
+
+        local_path = os.path.join(self.audio_base_path, f"{audio_file_id}.wav")
+
+        # If already downloaded, use it
+        if os.path.exists(local_path):
+            self._audio_cache[audio_file_id] = local_path
+            return local_path
+
+        # Initialize MinIO client if needed
+        if not self.minio_client:
+            self.minio_client = Minio(
+                self.minio_endpoint,
+                access_key=self.minio_access_key,
+                secret_key=self.minio_secret_key,
+                secure=False
+            )
+
+        # Look up audio file in database to get MinIO path (synchronous)
+        try:
+            minio_path = self._get_audio_minio_path_sync(audio_file_id)
+
+            if minio_path:
+                logger.info(f"Downloading audio file {audio_file_id} from MinIO: {minio_path}")
+                self.minio_client.fget_object(self.minio_bucket, minio_path, local_path)
+                self._audio_cache[audio_file_id] = local_path
+                logger.info(f"Audio file downloaded to {local_path}")
+                return local_path
+            else:
+                logger.error(f"Audio file {audio_file_id} not found in database")
+        except Exception as e:
+            logger.error(f"Failed to download audio file {audio_file_id}: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return local_path
+
+    def _get_audio_minio_path_sync(self, audio_file_id: str) -> Optional[str]:
+        """Get the MinIO path for an audio file from the database (synchronous)."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        # Convert async URL to sync URL
+        sync_db_url = self.db_url.replace("+asyncpg", "")
+
+        engine = create_engine(sync_db_url)
+        try:
+            with Session(engine) as session:
+                result = session.execute(
+                    select(AudioFile).where(AudioFile.id == audio_file_id)
+                )
+                audio = result.scalar_one_or_none()
+
+                if audio:
+                    # Prefer transcoded WAV, fall back to original
+                    if audio.transcoded_paths and "wav" in audio.transcoded_paths:
+                        return audio.transcoded_paths["wav"]
+                    return audio.storage_path
+                return None
+        finally:
+            engine.dispose()
 
     async def start(self):
         """Start the dialer engine."""

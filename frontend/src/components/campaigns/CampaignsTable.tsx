@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { usePermissions } from '@/hooks/use-permissions';
 import {
   Table,
   TableBody,
@@ -54,6 +55,12 @@ export function CampaignsTable({ onViewCampaign, onEditCampaign }: CampaignsTabl
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
+
+  // Permission checks
+  const canEditCampaigns = hasPermission('campaigns.edit');
+  const canDeleteCampaigns = hasPermission('campaigns.delete');
+  const canControlCampaigns = hasPermission('campaigns.control');
 
   const { data, isLoading } = useQuery({
     queryKey: ['campaigns', page, search, statusFilter],
@@ -259,47 +266,51 @@ export function CampaignsTable({ onViewCampaign, onEditCampaign }: CampaignsTabl
                           <Eye className="mr-2 h-4 w-4" />
                           View
                         </DropdownMenuItem>
-                        {canEdit(campaign.status) && (
+                        {canEditCampaigns && canEdit(campaign.status) && (
                           <DropdownMenuItem onClick={() => onEditCampaign(campaign)}>
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
                         )}
-                        <DropdownMenuSeparator />
-                        {canStart(campaign.status) && (
-                          <DropdownMenuItem
-                            onClick={() => startMutation.mutate(campaign.id)}
-                            className="text-green-600"
-                          >
-                            <Play className="mr-2 h-4 w-4" />
-                            Start
-                          </DropdownMenuItem>
+                        {canControlCampaigns && (
+                          <>
+                            <DropdownMenuSeparator />
+                            {canStart(campaign.status) && (
+                              <DropdownMenuItem
+                                onClick={() => startMutation.mutate(campaign.id)}
+                                className="text-green-600"
+                              >
+                                <Play className="mr-2 h-4 w-4" />
+                                Start
+                              </DropdownMenuItem>
+                            )}
+                            {canPause(campaign.status) && (
+                              <DropdownMenuItem onClick={() => pauseMutation.mutate(campaign.id)}>
+                                <Pause className="mr-2 h-4 w-4" />
+                                Pause
+                              </DropdownMenuItem>
+                            )}
+                            {canResume(campaign.status) && (
+                              <DropdownMenuItem
+                                onClick={() => resumeMutation.mutate(campaign.id)}
+                                className="text-green-600"
+                              >
+                                <Play className="mr-2 h-4 w-4" />
+                                Resume
+                              </DropdownMenuItem>
+                            )}
+                            {canCancel(campaign.status) && (
+                              <DropdownMenuItem
+                                onClick={() => cancelMutation.mutate(campaign.id)}
+                                className="text-orange-600"
+                              >
+                                <XCircle className="mr-2 h-4 w-4" />
+                                Cancel
+                              </DropdownMenuItem>
+                            )}
+                          </>
                         )}
-                        {canPause(campaign.status) && (
-                          <DropdownMenuItem onClick={() => pauseMutation.mutate(campaign.id)}>
-                            <Pause className="mr-2 h-4 w-4" />
-                            Pause
-                          </DropdownMenuItem>
-                        )}
-                        {canResume(campaign.status) && (
-                          <DropdownMenuItem
-                            onClick={() => resumeMutation.mutate(campaign.id)}
-                            className="text-green-600"
-                          >
-                            <Play className="mr-2 h-4 w-4" />
-                            Resume
-                          </DropdownMenuItem>
-                        )}
-                        {canCancel(campaign.status) && (
-                          <DropdownMenuItem
-                            onClick={() => cancelMutation.mutate(campaign.id)}
-                            className="text-orange-600"
-                          >
-                            <XCircle className="mr-2 h-4 w-4" />
-                            Cancel
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete(campaign.status) && (
+                        {canDeleteCampaigns && canDelete(campaign.status) && (
                           <>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem

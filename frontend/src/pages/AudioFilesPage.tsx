@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import { usePermissions } from '@/hooks/use-permissions';
 import { audioApi } from '@/services/api';
 import type { AudioFile, AudioStatus } from '@/types';
 
@@ -60,6 +61,11 @@ function getStatusBadgeClass(status: AudioStatus): string {
 export function AudioFilesPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { hasPermission } = usePermissions();
+
+  // Permission checks
+  const canUpload = hasPermission('audio.upload');
+  const canDelete = hasPermission('audio.delete');
 
   // State
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -230,15 +236,19 @@ export function AudioFilesPage() {
               telephony-compatible formats.
             </CardDescription>
           </div>
-          <Button onClick={() => setIsUploadDialogOpen(true)}>Upload Audio</Button>
+          {canUpload && (
+            <Button onClick={() => setIsUploadDialogOpen(true)}>Upload Audio</Button>
+          )}
         </CardHeader>
         <CardContent>
           {audioFiles.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground mb-4">No audio files uploaded yet.</p>
-              <Button variant="outline" onClick={() => setIsUploadDialogOpen(true)}>
-                Upload Your First Audio File
-              </Button>
+              {canUpload && (
+                <Button variant="outline" onClick={() => setIsUploadDialogOpen(true)}>
+                  Upload Your First Audio File
+                </Button>
+              )}
             </div>
           ) : (
             <Table>
@@ -297,14 +307,16 @@ export function AudioFilesPage() {
                             {playingAudioId === audio.id ? 'Stop' : 'Play'}
                           </Button>
                         )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-red-600 hover:text-red-700"
-                          onClick={() => handleDeleteClick(audio)}
-                        >
-                          Delete
-                        </Button>
+                        {canDelete && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDeleteClick(audio)}
+                          >
+                            Delete
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

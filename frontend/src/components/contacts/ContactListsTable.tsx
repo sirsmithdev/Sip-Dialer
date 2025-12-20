@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { contactsApi } from '@/services/api';
+import { usePermissions } from '@/hooks/use-permissions';
 import type { ContactList } from '@/types';
 import {
   Table,
@@ -28,6 +29,7 @@ export interface ContactListsTableProps {
 
 export function ContactListsTable({ onSelectList, onUploadClick }: ContactListsTableProps) {
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -35,6 +37,8 @@ export function ContactListsTable({ onSelectList, onUploadClick }: ContactListsT
   const [listToDelete, setListToDelete] = useState<ContactList | null>(null);
 
   const pageSize = 10;
+  const canDelete = hasPermission('contacts.delete');
+  const canImport = hasPermission('contacts.import');
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['contactLists', page, search],
@@ -91,9 +95,11 @@ export function ContactListsTable({ onSelectList, onUploadClick }: ContactListsT
             Search
           </Button>
         </div>
-        <Button onClick={onUploadClick}>
-          Upload Contacts
-        </Button>
+        {canImport && (
+          <Button onClick={onUploadClick}>
+            Upload Contacts
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -169,14 +175,16 @@ export function ContactListsTable({ onSelectList, onUploadClick }: ContactListsT
                       >
                         View
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-red-600 hover:text-red-700"
-                        onClick={() => handleDeleteClick(list)}
-                      >
-                        Delete
-                      </Button>
+                      {canDelete && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-red-600 hover:text-red-700"
+                          onClick={() => handleDeleteClick(list)}
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

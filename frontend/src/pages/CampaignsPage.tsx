@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { campaignsApi } from '@/services/api';
 import { CampaignsTable, CampaignForm, CampaignDetail } from '@/components/campaigns';
+import { PermissionGate } from '@/components/PermissionGate';
 import type { CampaignCreate, CampaignUpdate, CampaignListItem } from '@/types';
 
 type ViewMode = 'list' | 'detail' | 'create' | 'edit';
@@ -150,10 +151,12 @@ export function CampaignsPage() {
           <h1 className="text-3xl font-bold">Campaigns</h1>
           <p className="text-muted-foreground">Manage your auto-dialer campaigns</p>
         </div>
-        <Button onClick={() => setViewMode('create')}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Campaign
-        </Button>
+        <PermissionGate permission="campaigns.create">
+          <Button onClick={() => setViewMode('create')}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Campaign
+          </Button>
+        </PermissionGate>
       </div>
 
       <CampaignsTable onViewCampaign={handleViewCampaign} onEditCampaign={handleEditCampaign} />

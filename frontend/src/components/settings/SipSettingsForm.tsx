@@ -6,6 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Info } from 'lucide-react';
+import { usePermissions } from '@/hooks/use-permissions';
 import { sipSettingsApi } from '@/services/api';
 import type { SIPSettings, SIPSettingsCreate } from '@/types';
 
@@ -19,7 +22,11 @@ const AVAILABLE_CODECS = [
 
 export function SipSettingsForm() {
   const queryClient = useQueryClient();
+  const { hasPermission } = usePermissions();
   const [isEditing, setIsEditing] = useState(false);
+
+  // Permission check for editing
+  const canEdit = hasPermission('settings.edit');
 
   // Fetch existing settings
   const { data: settings, isLoading, error } = useQuery({
@@ -164,9 +171,18 @@ export function SipSettingsForm() {
                   </p>
                 </div>
               </div>
-              <Button onClick={() => { initializeForm(settings); setIsEditing(true); }}>
-                Edit Settings
-              </Button>
+              {canEdit ? (
+                <Button onClick={() => { initializeForm(settings); setIsEditing(true); }}>
+                  Edit Settings
+                </Button>
+              ) : (
+                <Alert className="mt-4">
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    You have view-only access to settings. Contact an administrator to make changes.
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
