@@ -160,6 +160,16 @@ class SIPCall:
         self._media_handler: Optional[Any] = None
         self._dtmf_callback: Optional[Callable[[str], None]] = None
 
+    @property
+    def call_id(self) -> str:
+        """Get the call ID."""
+        return self.info.call_id
+
+    @property
+    def state(self) -> CallState:
+        """Get the current call state."""
+        return self.info.state
+
     def make_call(self, destination: str, caller_id: str = ""):
         """Initiate an outbound call."""
         if not PJSUA2_AVAILABLE:
@@ -359,6 +369,14 @@ class SIPEngine:
 
         # Initialize
         self._endpoint.libInit(ep_cfg)
+
+        # Set null audio device (no physical audio device in Docker)
+        # This allows calls to be made without a sound card
+        try:
+            self._endpoint.audDevManager().setNullDev()
+            logger.info("Using null audio device")
+        except Exception as e:
+            logger.warning(f"Could not set null audio device: {e}")
 
         # Create UDP transport
         tp_cfg = pj.TransportConfig()

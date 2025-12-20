@@ -271,6 +271,9 @@ class DialerEngine:
         """Process active campaigns and initiate calls."""
         logger.info("Starting campaign processing loop...")
 
+        # Start Redis listener for test calls
+        asyncio.create_task(self._listen_for_test_calls())
+
         while self.running:
             try:
                 # Check if still registered
@@ -291,6 +294,89 @@ class DialerEngine:
             except Exception as e:
                 logger.error(f"Error processing campaigns: {e}")
                 await asyncio.sleep(5)
+
+    async def _listen_for_test_calls(self):
+        """Listen for test call requests via Redis."""
+        import redis.asyncio as redis
+        import json
+
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        logger.info(f"Listening for test calls on Redis: {redis_url}")
+
+        try:
+            r = redis.from_url(redis_url)
+            pubsub = r.pubsub()
+            await pubsub.subscribe("dialer:test_call")
+
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        destination = data.get("destination")
+                        caller_id = data.get("caller_id", "")
+                        audio_file = data.get("audio_file")  # Optional audio file to play
+
+                        if destination:
+                            logger.info(f"Received test call request: {destination}")
+
+                            # If audio file specified, create a simple IVR flow
+                            ivr_flow = None
+                            if audio_file:
+                                ivr_flow = {
+                                    "nodes": [
+                                        {"id": "start", "type": "start", "data": {}},
+                                        {"id": "play", "type": "play_audio", "data": {"audio_file_id": audio_file}},
+                                        {"id": "hangup", "type": "hangup", "data": {}}
+                                    ],
+                                    "edges": [
+                                        {"source": "start", "target": "play"},
+                                        {"source": "play", "target": "hangup"}
+                                    ],
+                                    "start_node": "start"
+                                }
+
+                            call = await self.make_call(destination, caller_id, ivr_flow)
+                            if call:
+                                asyncio.create_task(self._monitor_test_call(call, r))
+                    except Exception as e:
+                        logger.error(f"Error processing test call request: {e}")
+
+        except Exception as e:
+            logger.error(f"Redis listener error: {e}")
+
+    async def _monitor_test_call(self, call, redis_client):
+        """Monitor a test call and publish status updates."""
+        import json
+
+        try:
+            start_time = asyncio.get_event_loop().time()
+            max_duration = 120  # 2 minutes max
+
+            while self.running:
+                state = call.state
+                elapsed = asyncio.get_event_loop().time() - start_time
+
+                # Publish status update
+                status = {
+                    "call_id": call.call_id,
+                    "state": state.value if hasattr(state, 'value') else str(state),
+                    "elapsed": round(elapsed, 1)
+                }
+                await redis_client.publish("dialer:call_status", json.dumps(status))
+
+                if state in (CallState.DISCONNECTED, CallState.FAILED):
+                    logger.info(f"Test call {call.call_id} ended: {state}")
+                    break
+
+                if elapsed > max_duration:
+                    logger.info(f"Test call {call.call_id} timeout, hanging up")
+                    call.hangup()
+                    break
+
+                await asyncio.sleep(1)
+
+        except Exception as e:
+            logger.error(f"Error monitoring test call: {e}")
 
     async def make_call(
         self,

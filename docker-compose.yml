@@ -81,7 +81,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       # Mount audio files directory
-      - audio_files:/var/lib/autodialer/audio:ro
+      - audio_files:/var/lib/autodialer/audio
     depends_on:
       postgresql:
         condition: service_healthy

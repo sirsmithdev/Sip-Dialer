@@ -9,24 +9,7 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { ContactsPage } from '@/pages/ContactsPage';
 import { CampaignsPage } from '@/pages/CampaignsPage';
 import { IvrBuilderPage } from '@/pages/IvrBuilderPage';
-
-function AudioFilesPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Audio Files</h1>
-        <p className="text-muted-foreground">
-          Manage your audio prompts and recordings
-        </p>
-      </div>
-      <div className="rounded-lg border p-6">
-        <p className="text-muted-foreground">
-          Audio file management will be implemented here.
-        </p>
-      </div>
-    </div>
-  );
-}
+import { AudioFilesPage } from '@/pages/AudioFilesPage';
 
 export function App() {
   const { fetchUser } = useAuth();

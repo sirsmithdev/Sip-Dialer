@@ -1,6 +1,5 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SipSettingsForm } from '@/components/settings/SipSettingsForm';
-import { AudioSettingsTab } from '@/components/settings/AudioSettingsTab';
 import { GeneralSettingsTab } from '@/components/settings/GeneralSettingsTab';
 
 export function SettingsPage() {
@@ -16,16 +15,11 @@ export function SettingsPage() {
       <Tabs defaultValue="sip" className="space-y-4">
         <TabsList>
           <TabsTrigger value="sip">SIP Configuration</TabsTrigger>
-          <TabsTrigger value="audio">Audio</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sip">
           <SipSettingsForm />
-        </TabsContent>
-
-        <TabsContent value="audio">
-          <AudioSettingsTab />
         </TabsContent>
 
         <TabsContent value="general">
