@@ -54,6 +54,14 @@ def get_async_url_and_connect_args():
 # Get clean URL and connect_args for async engine
 async_db_url, async_connect_args = get_async_url_and_connect_args()
 
+# Check if this is a DO managed database that needs app schema
+_is_do_db = "db.ondigitalocean.com" in async_db_url or "@db-" in async_db_url
+
+# For DO databases, add server_settings to set search_path
+if _is_do_db:
+    # Set search_path to look in app schema first, then public
+    async_connect_args["server_settings"] = {"search_path": "app, public"}
+
 # Create async engine
 engine = create_async_engine(
     async_db_url,
@@ -75,12 +83,28 @@ async_session_maker = async_sessionmaker(
 )
 
 # Create sync engine for Celery tasks
+# For sync engine, we use psycopg2 which handles sslmode differently
+sync_db_url = settings.sync_database_url
+sync_connect_args = {}
+
+# For DO databases, configure SSL and schema
+if _is_do_db:
+    # psycopg2 uses options parameter for search_path
+    sync_connect_args["options"] = "-c search_path=app,public"
+    # Add sslmode if not present in URL
+    if "sslmode" not in sync_db_url:
+        if "?" in sync_db_url:
+            sync_db_url += "&sslmode=require"
+        else:
+            sync_db_url += "?sslmode=require"
+
 sync_engine = create_engine(
-    settings.sync_database_url,
+    sync_db_url,
     echo=settings.debug,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    connect_args=sync_connect_args if sync_connect_args else None,
 )
 
 # Create sync session factory

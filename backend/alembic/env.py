@@ -87,7 +87,30 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection: Connection) -> None:
     """Run migrations with a connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    from sqlalchemy import text
+    import logging
+    logger = logging.getLogger("alembic.env")
+
+    # For DO App Platform dev databases, we need to handle potential schema permission issues
+    # The database is fresh but public schema may have restricted CREATE permissions
+    # Solution: Create our own schema that we own
+    try:
+        # Create 'app' schema that we'll own
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
+        connection.execute(text("SET search_path TO app, public"))
+        connection.commit()
+        logger.info("Using 'app' schema for database tables")
+
+        # Configure alembic to use app schema for version table
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table_schema="app",
+            include_schemas=True,
+        )
+    except Exception as e:
+        logger.warning(f"Could not create app schema, using public: {e}")
+        context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
         context.run_migrations()
