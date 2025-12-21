@@ -594,13 +594,18 @@ class DialerEngine:
         campaign: Campaign,
         limit: int
     ) -> List[tuple]:
-        """Get pending contacts ready to be dialed."""
+        """Get pending contacts ready to be dialed.
+
+        Uses SELECT ... FOR UPDATE SKIP LOCKED to prevent duplicate processing
+        when multiple dialer instances are running.
+        """
         now = datetime.utcnow()
 
         # Query for contacts that are:
         # 1. PENDING status, OR
         # 2. FAILED/IN_PROGRESS with retry scheduled (next_attempt_at <= now)
         # AND haven't exceeded max retries
+        # Using FOR UPDATE SKIP LOCKED to prevent race conditions
         query = (
             select(CampaignContact, Contact)
             .join(Contact, CampaignContact.contact_id == Contact.id)
@@ -619,6 +624,7 @@ class DialerEngine:
             )
             .order_by(CampaignContact.priority, CampaignContact.created_at)
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
 
         result = await session.execute(query)

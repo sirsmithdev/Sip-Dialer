@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Info, Mail, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Info, Mail, CheckCircle, XCircle } from 'lucide-react';
 import { usePermissions } from '@/hooks/use-permissions';
 import { emailSettingsApi } from '@/services/api';
 import type { EmailSettings, EmailSettingsCreate } from '@/types';
