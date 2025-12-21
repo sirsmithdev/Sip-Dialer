@@ -1,29 +1,41 @@
 """
-Email Settings schemas for SMTP configuration.
+Email Settings schemas for SMTP and Resend configuration.
 """
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, EmailStr
+
+from app.models.email_settings import EmailProvider
 
 
 class EmailSettingsBase(BaseModel):
     """Base email settings schema."""
-    smtp_host: str = Field(..., description="SMTP server hostname")
-    smtp_port: int = Field(587, description="SMTP port (587 for TLS, 465 for SSL)")
-    smtp_username: str = Field(..., description="SMTP username/email")
+    provider: EmailProvider = Field(
+        default=EmailProvider.RESEND,
+        description="Email provider (resend or smtp)"
+    )
     from_email: EmailStr = Field(..., description="From email address")
     from_name: str = Field("SIP Auto-Dialer", description="From name displayed in emails")
+    # SMTP settings (optional, only needed for SMTP provider)
+    smtp_host: Optional[str] = Field(None, description="SMTP server hostname")
+    smtp_port: Optional[int] = Field(587, description="SMTP port (587 for TLS, 465 for SSL)")
+    smtp_username: Optional[str] = Field(None, description="SMTP username/email")
     use_tls: bool = Field(True, description="Use STARTTLS")
     use_ssl: bool = Field(False, description="Use SSL/TLS on connect")
 
 
 class EmailSettingsCreate(EmailSettingsBase):
     """Email settings creation schema."""
-    smtp_password: str = Field(..., description="SMTP password or app password")
+    # Resend settings
+    resend_api_key: Optional[str] = Field(None, description="Resend API key")
+    # SMTP settings
+    smtp_password: Optional[str] = Field(None, description="SMTP password or app password")
 
 
 class EmailSettingsUpdate(BaseModel):
     """Email settings update schema."""
+    provider: Optional[EmailProvider] = None
+    resend_api_key: Optional[str] = None
     smtp_host: Optional[str] = None
     smtp_port: Optional[int] = None
     smtp_username: Optional[str] = None
@@ -35,11 +47,23 @@ class EmailSettingsUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class EmailSettingsResponse(EmailSettingsBase):
-    """Email settings response schema (excludes password)."""
+class EmailSettingsResponse(BaseModel):
+    """Email settings response schema (excludes credentials)."""
     id: str
     organization_id: str
+    provider: EmailProvider
+    from_email: str
+    from_name: str
+    # SMTP settings (if using SMTP provider)
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_username: Optional[str] = None
+    use_tls: bool = True
+    use_ssl: bool = False
+    # Status
     is_active: bool
+    has_resend_key: bool = False  # Indicates if Resend API key is configured
+    has_smtp_password: bool = False  # Indicates if SMTP password is configured
     last_test_at: Optional[datetime] = None
     last_test_success: Optional[bool] = None
     last_test_error: Optional[str] = None
@@ -52,6 +76,13 @@ class EmailSettingsResponse(EmailSettingsBase):
 
 class EmailConnectionTestRequest(BaseModel):
     """Request schema for testing email connection with custom settings."""
+    provider: EmailProvider = Field(
+        default=EmailProvider.RESEND,
+        description="Email provider to test"
+    )
+    # Resend settings
+    resend_api_key: Optional[str] = None
+    # SMTP settings
     smtp_host: Optional[str] = None
     smtp_port: Optional[int] = None
     smtp_username: Optional[str] = None

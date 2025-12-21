@@ -454,17 +454,25 @@ export interface AudioDownloadResponse {
 }
 
 // Email Settings types
+export type EmailProvider = 'smtp' | 'resend';
+
 export interface EmailSettings {
   id: string;
   organization_id: string;
-  smtp_host: string;
-  smtp_port: number;
-  smtp_username: string;
+  provider: EmailProvider;
   from_email: string;
   from_name: string;
+  // SMTP specific fields (only used when provider is 'smtp')
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_username: string | null;
   use_tls: boolean;
   use_ssl: boolean;
+  // Status flags
   is_active: boolean;
+  has_resend_key: boolean;
+  has_smtp_password: boolean;
+  // Test status
   last_test_at: string | null;
   last_test_success: boolean | null;
   last_test_error: string | null;
@@ -473,17 +481,23 @@ export interface EmailSettings {
 }
 
 export interface EmailSettingsCreate {
-  smtp_host: string;
-  smtp_port: number;
-  smtp_username: string;
-  smtp_password: string;
+  provider: EmailProvider;
   from_email: string;
   from_name?: string;
+  // Resend API key (required when provider is 'resend')
+  resend_api_key?: string;
+  // SMTP settings (required when provider is 'smtp')
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_password?: string;
   use_tls?: boolean;
   use_ssl?: boolean;
 }
 
 export interface EmailSettingsUpdate {
+  provider?: EmailProvider;
+  resend_api_key?: string;
   smtp_host?: string;
   smtp_port?: number;
   smtp_username?: string;

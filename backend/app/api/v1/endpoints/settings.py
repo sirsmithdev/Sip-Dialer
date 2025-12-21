@@ -29,7 +29,7 @@ from app.services.sip_settings_service import SIPSettingsService
 from app.services.connection_test_service import ConnectionTestService
 from app.services.email_service import EmailService
 from app.models.user import User, UserRole
-from app.models.email_settings import EmailSettings
+from app.models.email_settings import EmailSettings, EmailProvider
 from app.models.email_log import EmailLog, EmailType, EmailStatus
 
 logger = logging.getLogger(__name__)
@@ -235,6 +235,30 @@ async def delete_sip_settings(
 # =============================================================================
 
 
+def _email_settings_to_response(settings: EmailSettings) -> EmailSettingsResponse:
+    """Convert EmailSettings model to response schema with computed fields."""
+    return EmailSettingsResponse(
+        id=str(settings.id),
+        organization_id=str(settings.organization_id),
+        provider=settings.provider,
+        from_email=settings.from_email,
+        from_name=settings.from_name,
+        smtp_host=settings.smtp_host,
+        smtp_port=settings.smtp_port,
+        smtp_username=settings.smtp_username,
+        use_tls=settings.use_tls,
+        use_ssl=settings.use_ssl,
+        is_active=settings.is_active,
+        has_resend_key=bool(settings.resend_api_key_encrypted),
+        has_smtp_password=bool(settings.smtp_password_encrypted),
+        last_test_at=settings.last_test_at,
+        last_test_success=settings.last_test_success,
+        last_test_error=settings.last_test_error,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at,
+    )
+
+
 @router.get("/email", response_model=EmailSettingsResponse)
 async def get_email_settings(
     db: AsyncSession = Depends(get_db),
@@ -262,7 +286,7 @@ async def get_email_settings(
             detail="Email settings not configured"
         )
 
-    return settings
+    return _email_settings_to_response(settings)
 
 
 @router.post("/email", response_model=EmailSettingsResponse, status_code=status.HTTP_201_CREATED)
@@ -273,6 +297,8 @@ async def create_email_settings(
 ):
     """
     Create email settings for the current user's organization.
+
+    Supports both Resend API and SMTP providers.
     """
     if not current_user.organization_id:
         raise HTTPException(
@@ -294,9 +320,30 @@ async def create_email_settings(
             detail="Email settings already exist. Use PUT to update."
         )
 
+    # Validate provider-specific fields
+    if settings_in.provider == EmailProvider.RESEND and not settings_in.resend_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Resend API key is required when using Resend provider"
+        )
+
+    if settings_in.provider == EmailProvider.SMTP:
+        if not settings_in.smtp_host:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SMTP host is required when using SMTP provider"
+            )
+        if not settings_in.smtp_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SMTP password is required when using SMTP provider"
+            )
+
     email_service = EmailService(db)
     settings = await email_service.create_email_settings(
         organization_id=current_user.organization_id,
+        provider=settings_in.provider,
+        resend_api_key=settings_in.resend_api_key,
         smtp_host=settings_in.smtp_host,
         smtp_port=settings_in.smtp_port,
         smtp_username=settings_in.smtp_username,
@@ -306,7 +353,7 @@ async def create_email_settings(
         use_tls=settings_in.use_tls,
         use_ssl=settings_in.use_ssl,
     )
-    return settings
+    return _email_settings_to_response(settings)
 
 
 @router.put("/email", response_model=EmailSettingsResponse)
@@ -340,6 +387,8 @@ async def update_email_settings(
     email_service = EmailService(db)
     settings = await email_service.update_email_settings(
         email_settings=settings,
+        provider=settings_in.provider,
+        resend_api_key=settings_in.resend_api_key,
         smtp_host=settings_in.smtp_host,
         smtp_port=settings_in.smtp_port,
         smtp_username=settings_in.smtp_username,
@@ -350,7 +399,7 @@ async def update_email_settings(
         use_ssl=settings_in.use_ssl,
         is_active=settings_in.is_active,
     )
-    return settings
+    return _email_settings_to_response(settings)
 
 
 @router.delete("/email", status_code=status.HTTP_204_NO_CONTENT)
@@ -391,10 +440,12 @@ async def test_email_connection(
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.MANAGER))
 ):
     """
-    Test email/SMTP connection.
+    Test email connection.
 
     If no parameters provided, tests the saved organization settings.
     If parameters provided, tests with those custom settings.
+
+    Supports both Resend API and SMTP providers.
     """
     if not current_user.organization_id:
         raise HTTPException(
@@ -404,16 +455,28 @@ async def test_email_connection(
 
     email_service = EmailService(db)
 
-    if test_request and test_request.smtp_host:
-        # Test with custom settings
-        result = await email_service.test_connection(
-            smtp_host=test_request.smtp_host,
-            smtp_port=test_request.smtp_port,
-            smtp_username=test_request.smtp_username,
-            smtp_password=test_request.smtp_password,
-            use_tls=test_request.use_tls,
-            use_ssl=test_request.use_ssl,
-        )
+    if test_request:
+        # Test with custom settings based on provider
+        if test_request.provider == EmailProvider.RESEND:
+            result = await email_service.test_connection(
+                provider=EmailProvider.RESEND,
+                resend_api_key=test_request.resend_api_key,
+            )
+        elif test_request.smtp_host:
+            result = await email_service.test_connection(
+                provider=EmailProvider.SMTP,
+                smtp_host=test_request.smtp_host,
+                smtp_port=test_request.smtp_port,
+                smtp_username=test_request.smtp_username,
+                smtp_password=test_request.smtp_password,
+                use_tls=test_request.use_tls,
+                use_ssl=test_request.use_ssl,
+            )
+        else:
+            # Test with saved settings
+            result = await email_service.test_connection(
+                organization_id=current_user.organization_id
+            )
     else:
         # Test with saved settings
         result = await email_service.test_connection(

@@ -1,5 +1,5 @@
 """
-Email Service for sending emails via SMTP.
+Email Service for sending emails via SMTP or Resend API.
 Supports async sending, HTML emails, and email logging.
 """
 import asyncio
@@ -11,12 +11,13 @@ from typing import Optional, List
 from dataclasses import dataclass
 
 import aiosmtplib
+import resend
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.security import encrypt_value, decrypt_value
-from app.models.email_settings import EmailSettings
+from app.models.email_settings import EmailSettings, EmailProvider
 from app.models.email_log import EmailLog, EmailType, EmailStatus
 
 
@@ -34,7 +35,7 @@ class EmailResult:
 
 @dataclass
 class ConnectionTestResult:
-    """Result of SMTP connection test."""
+    """Result of email connection test."""
     success: bool
     error: Optional[str] = None
     server_response: Optional[str] = None
@@ -42,13 +43,14 @@ class ConnectionTestResult:
 
 class EmailService:
     """
-    Service for sending emails via SMTP.
+    Service for sending emails via SMTP or Resend API.
 
     Supports:
-    - Organization-specific SMTP settings
+    - Organization-specific email settings
     - Fallback to global settings
     - Async email sending
     - Email logging for audit trail
+    - Multiple providers (SMTP, Resend)
     """
 
     def __init__(self, db: AsyncSession):
@@ -67,26 +69,36 @@ class EmailService:
     async def create_email_settings(
         self,
         organization_id: str,
-        smtp_host: str,
-        smtp_port: int,
-        smtp_username: str,
-        smtp_password: str,
-        from_email: str,
-        from_name: str = "SIP Auto-Dialer",
+        provider: EmailProvider = EmailProvider.RESEND,
+        # Resend settings
+        resend_api_key: Optional[str] = None,
+        # SMTP settings
+        smtp_host: Optional[str] = None,
+        smtp_port: Optional[int] = None,
+        smtp_username: Optional[str] = None,
+        smtp_password: Optional[str] = None,
         use_tls: bool = True,
         use_ssl: bool = False,
+        # Common settings
+        from_email: str = "",
+        from_name: str = "SIP Auto-Dialer",
     ) -> EmailSettings:
         """Create email settings for an organization."""
         email_settings = EmailSettings(
             organization_id=organization_id,
+            provider=provider,
+            # Resend
+            resend_api_key_encrypted=encrypt_value(resend_api_key) if resend_api_key else None,
+            # SMTP
             smtp_host=smtp_host,
             smtp_port=smtp_port,
             smtp_username=smtp_username,
-            smtp_password_encrypted=encrypt_value(smtp_password),
-            from_email=from_email,
-            from_name=from_name,
+            smtp_password_encrypted=encrypt_value(smtp_password) if smtp_password else None,
             use_tls=use_tls,
             use_ssl=use_ssl,
+            # Common
+            from_email=from_email,
+            from_name=from_name,
             is_active=False,
         )
         self.db.add(email_settings)
@@ -97,6 +109,8 @@ class EmailService:
     async def update_email_settings(
         self,
         email_settings: EmailSettings,
+        provider: Optional[EmailProvider] = None,
+        resend_api_key: Optional[str] = None,
         smtp_host: Optional[str] = None,
         smtp_port: Optional[int] = None,
         smtp_username: Optional[str] = None,
@@ -108,6 +122,10 @@ class EmailService:
         is_active: Optional[bool] = None,
     ) -> EmailSettings:
         """Update email settings."""
+        if provider is not None:
+            email_settings.provider = provider
+        if resend_api_key is not None:
+            email_settings.resend_api_key_encrypted = encrypt_value(resend_api_key)
         if smtp_host is not None:
             email_settings.smtp_host = smtp_host
         if smtp_port is not None:
@@ -131,9 +149,17 @@ class EmailService:
         await self.db.refresh(email_settings)
         return email_settings
 
-    def _get_decrypted_password(self, email_settings: EmailSettings) -> str:
+    def _get_decrypted_password(self, email_settings: EmailSettings) -> Optional[str]:
         """Get decrypted SMTP password."""
-        return decrypt_value(email_settings.smtp_password_encrypted)
+        if email_settings.smtp_password_encrypted:
+            return decrypt_value(email_settings.smtp_password_encrypted)
+        return None
+
+    def _get_decrypted_resend_key(self, email_settings: EmailSettings) -> Optional[str]:
+        """Get decrypted Resend API key."""
+        if email_settings.resend_api_key_encrypted:
+            return decrypt_value(email_settings.resend_api_key_encrypted)
+        return None
 
     def _get_global_smtp_config(self) -> dict:
         """Get global SMTP configuration from settings."""
@@ -211,30 +237,16 @@ class EmailService:
         """
         results = []
 
-        # Get SMTP configuration
+        # Get email settings
         email_settings = await self.get_email_settings(organization_id)
 
-        if email_settings:
-            smtp_config = {
-                "hostname": email_settings.smtp_host,
-                "port": email_settings.smtp_port,
-                "username": email_settings.smtp_username,
-                "password": self._get_decrypted_password(email_settings),
-                "from_email": email_settings.from_email,
-                "from_name": email_settings.from_name,
-                "use_tls": email_settings.use_tls,
-                "use_ssl": email_settings.use_ssl,
-            }
-        else:
-            # Fall back to global settings
-            if not settings.smtp_enabled or not settings.smtp_host:
-                return [EmailResult(
-                    success=False,
-                    error="Email not configured. Please configure SMTP settings."
-                ) for _ in to_emails]
+        # Determine provider and config
+        provider = EmailProvider.RESEND  # Default
+        use_org_settings = False
 
-            smtp_config = self._get_global_smtp_config()
-            smtp_config["use_ssl"] = False
+        if email_settings:
+            provider = email_settings.provider
+            use_org_settings = True
 
         # Send to each recipient
         for recipient in to_emails:
@@ -252,23 +264,60 @@ class EmailService:
                 # Update status to sending
                 await self._update_email_log(email_log, EmailStatus.SENDING)
 
-                # Build the email message
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"] = f"{smtp_config['from_name']} <{smtp_config['from_email']}>"
-                msg["To"] = recipient
+                message_id = None
 
-                # Add plain text version
-                if body_text:
-                    text_part = MIMEText(body_text, "plain", "utf-8")
-                    msg.attach(text_part)
+                if provider == EmailProvider.RESEND:
+                    # Send via Resend
+                    if use_org_settings:
+                        message_id = await self._send_via_resend(
+                            email_settings=email_settings,
+                            recipient=recipient,
+                            subject=subject,
+                            body_html=body_html,
+                            body_text=body_text,
+                        )
+                    else:
+                        # Use global Resend settings
+                        message_id = await self._send_via_resend_global(
+                            recipient=recipient,
+                            subject=subject,
+                            body_html=body_html,
+                            body_text=body_text,
+                        )
+                else:
+                    # Send via SMTP
+                    if use_org_settings:
+                        smtp_config = {
+                            "hostname": email_settings.smtp_host,
+                            "port": email_settings.smtp_port,
+                            "username": email_settings.smtp_username,
+                            "password": self._get_decrypted_password(email_settings),
+                            "from_email": email_settings.from_email,
+                            "from_name": email_settings.from_name,
+                            "use_tls": email_settings.use_tls,
+                            "use_ssl": email_settings.use_ssl,
+                        }
+                    else:
+                        # Fall back to global settings
+                        if not settings.smtp_enabled or not settings.smtp_host:
+                            raise Exception("Email not configured. Please configure SMTP settings.")
+                        smtp_config = self._get_global_smtp_config()
+                        smtp_config["use_ssl"] = False
 
-                # Add HTML version
-                html_part = MIMEText(body_html, "html", "utf-8")
-                msg.attach(html_part)
+                    # Build the email message
+                    msg = MIMEMultipart("alternative")
+                    msg["Subject"] = subject
+                    msg["From"] = f"{smtp_config['from_name']} <{smtp_config['from_email']}>"
+                    msg["To"] = recipient
 
-                # Send via SMTP
-                message_id = await self._send_via_smtp(msg, smtp_config)
+                    if body_text:
+                        text_part = MIMEText(body_text, "plain", "utf-8")
+                        msg.attach(text_part)
+
+                    html_part = MIMEText(body_html, "html", "utf-8")
+                    msg.attach(html_part)
+
+                    message_id = await self._send_via_smtp(msg, smtp_config)
 
                 # Update log with success
                 await self._update_email_log(
@@ -283,7 +332,7 @@ class EmailService:
 
                 logger.info(
                     f"Email sent successfully to {recipient} "
-                    f"(type={email_type.value}, log_id={email_log.id})"
+                    f"(type={email_type.value}, provider={provider.value}, log_id={email_log.id})"
                 )
 
             except Exception as e:
@@ -302,6 +351,73 @@ class EmailService:
                 ))
 
         return results
+
+    async def _send_via_resend(
+        self,
+        email_settings: EmailSettings,
+        recipient: str,
+        subject: str,
+        body_html: str,
+        body_text: Optional[str] = None,
+    ) -> Optional[str]:
+        """Send email via Resend using organization settings."""
+        api_key = self._get_decrypted_resend_key(email_settings)
+        if not api_key:
+            raise Exception("Resend API key not configured")
+
+        resend.api_key = api_key
+
+        params = {
+            "from": f"{email_settings.from_name} <{email_settings.from_email}>",
+            "to": [recipient],
+            "subject": subject,
+            "html": body_html,
+        }
+        if body_text:
+            params["text"] = body_text
+
+        # Run in thread pool since resend library is synchronous
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: resend.Emails.send(params)
+        )
+
+        return response.get("id") if response else None
+
+    async def _send_via_resend_global(
+        self,
+        recipient: str,
+        subject: str,
+        body_html: str,
+        body_text: Optional[str] = None,
+    ) -> Optional[str]:
+        """Send email via Resend using global settings."""
+        if not settings.resend_api_key:
+            raise Exception("Global Resend API key not configured")
+
+        resend.api_key = settings.resend_api_key
+
+        from_email = settings.email_from_address or "noreply@example.com"
+        from_name = settings.email_from_name or "SIP Auto-Dialer"
+
+        params = {
+            "from": f"{from_name} <{from_email}>",
+            "to": [recipient],
+            "subject": subject,
+            "html": body_html,
+        }
+        if body_text:
+            params["text"] = body_text
+
+        # Run in thread pool since resend library is synchronous
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: resend.Emails.send(params)
+        )
+
+        return response.get("id") if response else None
 
     async def _send_via_smtp(
         self,
@@ -339,6 +455,10 @@ class EmailService:
     async def test_connection(
         self,
         organization_id: Optional[str] = None,
+        provider: EmailProvider = EmailProvider.RESEND,
+        # Resend settings
+        resend_api_key: Optional[str] = None,
+        # SMTP settings
         smtp_host: Optional[str] = None,
         smtp_port: Optional[int] = None,
         smtp_username: Optional[str] = None,
@@ -347,7 +467,7 @@ class EmailService:
         use_ssl: bool = False,
     ) -> ConnectionTestResult:
         """
-        Test SMTP connection.
+        Test email connection.
 
         Can test either:
         - Organization settings (if organization_id provided)
@@ -355,7 +475,7 @@ class EmailService:
         """
         try:
             # Determine which settings to use
-            if organization_id and not smtp_host:
+            if organization_id and not smtp_host and not resend_api_key:
                 # Use organization settings
                 email_settings = await self.get_email_settings(organization_id)
                 if not email_settings:
@@ -373,41 +493,97 @@ class EmailService:
                         error="No email settings found for organization"
                     )
 
-                smtp_config = {
-                    "hostname": email_settings.smtp_host,
-                    "port": email_settings.smtp_port,
-                    "username": email_settings.smtp_username,
-                    "password": self._get_decrypted_password(email_settings),
-                    "use_tls": email_settings.use_tls,
-                    "use_ssl": email_settings.use_ssl,
-                }
+                provider = email_settings.provider
+
+                if provider == EmailProvider.RESEND:
+                    return await self._test_resend(
+                        api_key=self._get_decrypted_resend_key(email_settings)
+                    )
+                else:
+                    return await self._test_smtp({
+                        "hostname": email_settings.smtp_host,
+                        "port": email_settings.smtp_port,
+                        "username": email_settings.smtp_username,
+                        "password": self._get_decrypted_password(email_settings),
+                        "use_tls": email_settings.use_tls,
+                        "use_ssl": email_settings.use_ssl,
+                    })
+
+            elif resend_api_key or provider == EmailProvider.RESEND:
+                # Test Resend with provided key or global key
+                return await self._test_resend(api_key=resend_api_key)
+
             elif smtp_host:
-                # Use provided settings
-                smtp_config = {
+                # Test SMTP with provided settings
+                return await self._test_smtp({
                     "hostname": smtp_host,
                     "port": smtp_port or 587,
                     "username": smtp_username,
                     "password": smtp_password,
                     "use_tls": use_tls,
                     "use_ssl": use_ssl,
-                }
+                })
+
             else:
-                # Use global settings
-                if not settings.smtp_host:
+                # Test global settings
+                if settings.resend_api_key:
+                    return await self._test_resend(api_key=settings.resend_api_key)
+                elif settings.smtp_host:
+                    return await self._test_smtp({
+                        "hostname": settings.smtp_host,
+                        "port": settings.smtp_port,
+                        "username": settings.smtp_username,
+                        "password": settings.smtp_password,
+                        "use_tls": settings.smtp_use_tls,
+                        "use_ssl": False,
+                    })
+                else:
                     return ConnectionTestResult(
                         success=False,
-                        error="No SMTP settings configured"
+                        error="No email settings configured"
                     )
-                smtp_config = {
-                    "hostname": settings.smtp_host,
-                    "port": settings.smtp_port,
-                    "username": settings.smtp_username,
-                    "password": settings.smtp_password,
-                    "use_tls": settings.smtp_use_tls,
-                    "use_ssl": False,
-                }
 
-            # Test connection
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Email connection test failed: {error_msg}")
+            return ConnectionTestResult(
+                success=False,
+                error=error_msg
+            )
+
+    async def _test_resend(self, api_key: Optional[str] = None) -> ConnectionTestResult:
+        """Test Resend API connection."""
+        try:
+            key = api_key or settings.resend_api_key
+            if not key:
+                return ConnectionTestResult(
+                    success=False,
+                    error="Resend API key not provided"
+                )
+
+            resend.api_key = key
+
+            # Test by fetching domains (lightweight API call)
+            loop = asyncio.get_event_loop()
+            domains = await loop.run_in_executor(
+                None,
+                lambda: resend.Domains.list()
+            )
+
+            return ConnectionTestResult(
+                success=True,
+                server_response=f"Connected to Resend API. {len(domains.get('data', []))} domain(s) configured."
+            )
+
+        except Exception as e:
+            return ConnectionTestResult(
+                success=False,
+                error=str(e)
+            )
+
+    async def _test_smtp(self, smtp_config: dict) -> ConnectionTestResult:
+        """Test SMTP connection."""
+        try:
             use_ssl_connect = smtp_config.get("use_ssl", False)
             use_tls_starttls = smtp_config.get("use_tls", True) and not use_ssl_connect
 
@@ -430,49 +606,15 @@ class EmailService:
             response = await smtp.noop()
             await smtp.quit()
 
-            # Update email settings with test result if testing organization settings
-            if organization_id and not smtp_host:
-                email_settings = await self.db.execute(
-                    select(EmailSettings).where(
-                        EmailSettings.organization_id == organization_id
-                    )
-                )
-                email_settings_obj = email_settings.scalar_one_or_none()
-                if email_settings_obj:
-                    email_settings_obj.last_test_at = datetime.now(timezone.utc)
-                    email_settings_obj.last_test_success = True
-                    email_settings_obj.last_test_error = None
-                    await self.db.commit()
-
             return ConnectionTestResult(
                 success=True,
                 server_response=str(response) if response else "Connection successful"
             )
 
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"SMTP connection test failed: {error_msg}")
-
-            # Update email settings with test failure if testing organization settings
-            if organization_id and not smtp_host:
-                try:
-                    result = await self.db.execute(
-                        select(EmailSettings).where(
-                            EmailSettings.organization_id == organization_id
-                        )
-                    )
-                    email_settings_obj = result.scalar_one_or_none()
-                    if email_settings_obj:
-                        email_settings_obj.last_test_at = datetime.now(timezone.utc)
-                        email_settings_obj.last_test_success = False
-                        email_settings_obj.last_test_error = error_msg[:500]
-                        await self.db.commit()
-                except Exception:
-                    pass  # Don't fail if we can't update the settings
-
             return ConnectionTestResult(
                 success=False,
-                error=error_msg
+                error=str(e)
             )
 
     async def send_test_email(

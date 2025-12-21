@@ -7,10 +7,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Info, Mail, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Info, Mail, CheckCircle, XCircle, Zap, Server } from 'lucide-react';
 import { usePermissions } from '@/hooks/use-permissions';
 import { emailSettingsApi } from '@/services/api';
-import type { EmailSettings, EmailSettingsCreate } from '@/types';
+import type { EmailSettings, EmailSettingsCreate, EmailProvider } from '@/types';
 
 export function EmailSettingsForm() {
   const queryClient = useQueryClient();
@@ -30,12 +31,14 @@ export function EmailSettingsForm() {
 
   // Form state
   const [formData, setFormData] = useState<Partial<EmailSettingsCreate>>({
+    provider: 'resend',
+    from_email: '',
+    from_name: 'SIP Auto-Dialer',
+    resend_api_key: '',
     smtp_host: '',
     smtp_port: 587,
     smtp_username: '',
     smtp_password: '',
-    from_email: '',
-    from_name: 'SIP Auto-Dialer',
     use_tls: true,
     use_ssl: false,
   });
@@ -43,12 +46,14 @@ export function EmailSettingsForm() {
   // Initialize form with existing settings
   const initializeForm = (data: EmailSettings) => {
     setFormData({
-      smtp_host: data.smtp_host,
-      smtp_port: data.smtp_port,
-      smtp_username: data.smtp_username,
-      smtp_password: '', // Don't populate password
+      provider: data.provider,
       from_email: data.from_email,
       from_name: data.from_name,
+      resend_api_key: '', // Don't populate API key
+      smtp_host: data.smtp_host || '',
+      smtp_port: data.smtp_port || 587,
+      smtp_username: data.smtp_username || '',
+      smtp_password: '', // Don't populate password
       use_tls: data.use_tls,
       use_ssl: data.use_ssl,
     });
@@ -97,10 +102,29 @@ export function EmailSettingsForm() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Remove empty password field if updating
-    const submitData = { ...formData };
-    if (!submitData.smtp_password) {
-      delete submitData.smtp_password;
+    // Prepare submit data based on provider
+    const submitData: Partial<EmailSettingsCreate> = {
+      provider: formData.provider,
+      from_email: formData.from_email,
+      from_name: formData.from_name,
+    };
+
+    if (formData.provider === 'resend') {
+      // Only include Resend API key if provided
+      if (formData.resend_api_key) {
+        submitData.resend_api_key = formData.resend_api_key;
+      }
+    } else {
+      // SMTP settings
+      submitData.smtp_host = formData.smtp_host;
+      submitData.smtp_port = formData.smtp_port;
+      submitData.smtp_username = formData.smtp_username;
+      submitData.use_tls = formData.use_tls;
+      submitData.use_ssl = formData.use_ssl;
+      // Only include password if provided
+      if (formData.smtp_password) {
+        submitData.smtp_password = formData.smtp_password;
+      }
     }
 
     if (settings) {
@@ -137,7 +161,7 @@ export function EmailSettingsForm() {
                 Email Settings
               </CardTitle>
               <CardDescription>
-                Configure SMTP settings for sending email reports and notifications
+                Configure email settings for sending reports and notifications
               </CardDescription>
             </div>
             {hasSettings && (
@@ -165,23 +189,57 @@ export function EmailSettingsForm() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-muted-foreground">SMTP Server</Label>
-                  <p className="font-medium">{settings.smtp_host}:{settings.smtp_port}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Security</Label>
-                  <p className="font-medium">
-                    {settings.use_ssl ? 'SSL/TLS' : settings.use_tls ? 'STARTTLS' : 'None'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Username</Label>
-                  <p className="font-medium">{settings.smtp_username}</p>
+                  <Label className="text-muted-foreground">Provider</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    {settings.provider === 'resend' ? (
+                      <>
+                        <Zap className="h-4 w-4 text-purple-500" />
+                        <p className="font-medium">Resend API</p>
+                      </>
+                    ) : (
+                      <>
+                        <Server className="h-4 w-4 text-blue-500" />
+                        <p className="font-medium">SMTP Server</p>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">From</Label>
                   <p className="font-medium">{settings.from_name} &lt;{settings.from_email}&gt;</p>
                 </div>
+                {settings.provider === 'smtp' && (
+                  <>
+                    <div>
+                      <Label className="text-muted-foreground">SMTP Server</Label>
+                      <p className="font-medium">{settings.smtp_host}:{settings.smtp_port}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Security</Label>
+                      <p className="font-medium">
+                        {settings.use_ssl ? 'SSL/TLS' : settings.use_tls ? 'STARTTLS' : 'None'}
+                      </p>
+                    </div>
+                  </>
+                )}
+                {settings.provider === 'resend' && (
+                  <div>
+                    <Label className="text-muted-foreground">API Key Status</Label>
+                    <p className="font-medium flex items-center gap-2">
+                      {settings.has_resend_key ? (
+                        <>
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          Configured
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="h-4 w-4 text-red-600" />
+                          Not configured
+                        </>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Last Test Status */}
@@ -222,89 +280,172 @@ export function EmailSettingsForm() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
-              {/* SMTP Server Settings */}
+              {/* Provider Selection */}
               <div className="space-y-4">
-                <h3 className="font-semibold">SMTP Server</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp_host">SMTP Host</Label>
-                    <Input
-                      id="smtp_host"
-                      placeholder="smtp.gmail.com"
-                      value={formData.smtp_host}
-                      onChange={(e) => handleChange('smtp_host', e.target.value)}
-                      required
-                    />
+                <h3 className="font-semibold">Email Provider</h3>
+                <RadioGroup
+                  value={formData.provider}
+                  onValueChange={(value) => handleChange('provider', value as EmailProvider)}
+                  className="grid grid-cols-2 gap-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="resend" id="resend" />
+                    <Label htmlFor="resend" className="flex items-center gap-2 cursor-pointer">
+                      <Zap className="h-4 w-4 text-purple-500" />
+                      <div>
+                        <span className="font-medium">Resend</span>
+                        <p className="text-xs text-muted-foreground">
+                          Modern email API, recommended
+                        </p>
+                      </div>
+                    </Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="smtp" id="smtp" />
+                    <Label htmlFor="smtp" className="flex items-center gap-2 cursor-pointer">
+                      <Server className="h-4 w-4 text-blue-500" />
+                      <div>
+                        <span className="font-medium">SMTP</span>
+                        <p className="text-xs text-muted-foreground">
+                          Traditional SMTP server
+                        </p>
+                      </div>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              {/* Resend Settings */}
+              {formData.provider === 'resend' && (
+                <div className="space-y-4">
+                  <h3 className="font-semibold">Resend Configuration</h3>
                   <div className="space-y-2">
-                    <Label htmlFor="smtp_port">SMTP Port</Label>
+                    <Label htmlFor="resend_api_key">API Key</Label>
                     <Input
-                      id="smtp_port"
-                      type="number"
-                      placeholder="587"
-                      value={formData.smtp_port}
-                      onChange={(e) => handleChange('smtp_port', parseInt(e.target.value))}
-                      required
+                      id="resend_api_key"
+                      type="password"
+                      placeholder={settings?.has_resend_key ? '(unchanged)' : 're_xxxxxxxxxxxx'}
+                      value={formData.resend_api_key}
+                      onChange={(e) => handleChange('resend_api_key', e.target.value)}
+                      required={!settings?.has_resend_key}
                     />
                     <p className="text-xs text-muted-foreground">
-                      587 for STARTTLS, 465 for SSL
+                      Get your API key from{' '}
+                      <a
+                        href="https://resend.com/api-keys"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        resend.com/api-keys
+                      </a>
                     </p>
                   </div>
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Resend provides excellent deliverability and real-time analytics.
+                      You'll need to verify your domain in the Resend dashboard.
+                    </AlertDescription>
+                  </Alert>
                 </div>
+              )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp_username">Username</Label>
-                    <Input
-                      id="smtp_username"
-                      placeholder="your-email@gmail.com"
-                      value={formData.smtp_username}
-                      onChange={(e) => handleChange('smtp_username', e.target.value)}
-                      required
-                    />
+              {/* SMTP Settings */}
+              {formData.provider === 'smtp' && (
+                <div className="space-y-4">
+                  <h3 className="font-semibold">SMTP Server</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="smtp_host">SMTP Host</Label>
+                      <Input
+                        id="smtp_host"
+                        placeholder="smtp.gmail.com"
+                        value={formData.smtp_host}
+                        onChange={(e) => handleChange('smtp_host', e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="smtp_port">SMTP Port</Label>
+                      <Input
+                        id="smtp_port"
+                        type="number"
+                        placeholder="587"
+                        value={formData.smtp_port}
+                        onChange={(e) => handleChange('smtp_port', parseInt(e.target.value))}
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        587 for STARTTLS, 465 for SSL
+                      </p>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp_password">Password / App Password</Label>
-                    <Input
-                      id="smtp_password"
-                      type="password"
-                      placeholder={settings ? '(unchanged)' : 'App password for Gmail'}
-                      value={formData.smtp_password}
-                      onChange={(e) => handleChange('smtp_password', e.target.value)}
-                      required={!settings}
-                    />
-                  </div>
-                </div>
-              </div>
 
-              {/* Security Settings */}
-              <div className="space-y-4">
-                <h3 className="font-semibold">Security</h3>
-                <div className="flex items-center gap-6">
-                  <div className="flex items-center space-x-4">
-                    <Switch
-                      id="use_tls"
-                      checked={formData.use_tls && !formData.use_ssl}
-                      onCheckedChange={(checked) => {
-                        handleChange('use_tls', checked);
-                        if (checked) handleChange('use_ssl', false);
-                      }}
-                    />
-                    <Label htmlFor="use_tls">Use STARTTLS (Port 587)</Label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="smtp_username">Username</Label>
+                      <Input
+                        id="smtp_username"
+                        placeholder="your-email@gmail.com"
+                        value={formData.smtp_username}
+                        onChange={(e) => handleChange('smtp_username', e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="smtp_password">Password / App Password</Label>
+                      <Input
+                        id="smtp_password"
+                        type="password"
+                        placeholder={settings?.has_smtp_password ? '(unchanged)' : 'App password for Gmail'}
+                        value={formData.smtp_password}
+                        onChange={(e) => handleChange('smtp_password', e.target.value)}
+                        required={!settings?.has_smtp_password}
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-4">
-                    <Switch
-                      id="use_ssl"
-                      checked={formData.use_ssl}
-                      onCheckedChange={(checked) => {
-                        handleChange('use_ssl', checked);
-                        if (checked) handleChange('use_tls', false);
-                      }}
-                    />
-                    <Label htmlFor="use_ssl">Use SSL/TLS (Port 465)</Label>
+
+                  {/* Security Settings */}
+                  <div className="space-y-4">
+                    <h3 className="font-semibold">Security</h3>
+                    <div className="flex items-center gap-6">
+                      <div className="flex items-center space-x-4">
+                        <Switch
+                          id="use_tls"
+                          checked={formData.use_tls && !formData.use_ssl}
+                          onCheckedChange={(checked) => {
+                            handleChange('use_tls', checked);
+                            if (checked) handleChange('use_ssl', false);
+                          }}
+                        />
+                        <Label htmlFor="use_tls">Use STARTTLS (Port 587)</Label>
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        <Switch
+                          id="use_ssl"
+                          checked={formData.use_ssl}
+                          onCheckedChange={(checked) => {
+                            handleChange('use_ssl', checked);
+                            if (checked) handleChange('use_tls', false);
+                          }}
+                        />
+                        <Label htmlFor="use_ssl">Use SSL/TLS (Port 465)</Label>
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Gmail Note */}
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Gmail users:</strong> You'll need to use an App Password instead of your
+                      regular password. Go to your Google Account &gt; Security &gt; 2-Step Verification
+                      &gt; App Passwords to generate one.
+                    </AlertDescription>
+                  </Alert>
                 </div>
-              </div>
+              )}
 
               {/* Sender Settings */}
               <div className="space-y-4">
@@ -320,6 +461,11 @@ export function EmailSettingsForm() {
                       onChange={(e) => handleChange('from_email', e.target.value)}
                       required
                     />
+                    {formData.provider === 'resend' && (
+                      <p className="text-xs text-muted-foreground">
+                        Must be from a verified domain in Resend
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="from_name">From Name</Label>
@@ -332,16 +478,6 @@ export function EmailSettingsForm() {
                   </div>
                 </div>
               </div>
-
-              {/* Gmail Note */}
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertDescription>
-                  <strong>Gmail users:</strong> You'll need to use an App Password instead of your
-                  regular password. Go to your Google Account &gt; Security &gt; 2-Step Verification
-                  &gt; App Passwords to generate one.
-                </AlertDescription>
-              </Alert>
 
               {/* Form Actions */}
               <div className="flex space-x-4">
@@ -382,7 +518,7 @@ export function EmailSettingsForm() {
           <CardHeader>
             <CardTitle>Connection Test</CardTitle>
             <CardDescription>
-              Test SMTP connection and send a test email
+              Test {settings.provider === 'resend' ? 'Resend API' : 'SMTP'} connection and send a test email
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

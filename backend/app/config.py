@@ -138,8 +138,14 @@ class Settings(BaseSettings):
     encryption_key: str = "change-me-generate-a-secure-key"
 
     # ==========================================================================
-    # SMTP Email Settings (defaults, can be overridden per-organization in DB)
+    # Email Settings (defaults, can be overridden per-organization in DB)
     # ==========================================================================
+    # Resend API (preferred for production)
+    resend_api_key: str = ""
+    email_from_address: str = "noreply@autodialer.local"
+    email_from_name: str = "SIP Auto-Dialer"
+
+    # SMTP (fallback/alternative)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
