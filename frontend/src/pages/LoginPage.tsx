@@ -18,7 +18,7 @@ export function LoginPage() {
 
     try {
       await login({ email, password });
-      navigate('/');
+      navigate('/app');
     } catch {
       // Error is handled by the store
     }

@@ -22,12 +22,12 @@ interface NavItem {
 }
 
 const navigation: NavItem[] = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard, description: 'Overview & stats' },
-  { name: 'Campaigns', href: '/campaigns', icon: Phone, description: 'Manage campaigns' },
-  { name: 'Contacts', href: '/contacts', icon: Users, description: 'Contact lists' },
-  { name: 'IVR Builder', href: '/ivr', icon: GitBranch, description: 'Voice flows', permission: 'ivr.access' },
-  { name: 'Audio Files', href: '/audio', icon: Music, description: 'Voice prompts', permission: 'audio.access' },
-  { name: 'Settings', href: '/settings', icon: Settings, description: 'Configuration', permission: 'settings.access' },
+  { name: 'Dashboard', href: '/app', icon: LayoutDashboard, description: 'Overview & stats' },
+  { name: 'Campaigns', href: '/app/campaigns', icon: Phone, description: 'Manage campaigns' },
+  { name: 'Contacts', href: '/app/contacts', icon: Users, description: 'Contact lists' },
+  { name: 'IVR Builder', href: '/app/ivr', icon: GitBranch, description: 'Voice flows', permission: 'ivr.access' },
+  { name: 'Audio Files', href: '/app/audio', icon: Music, description: 'Voice prompts', permission: 'audio.access' },
+  { name: 'Settings', href: '/app/settings', icon: Settings, description: 'Configuration', permission: 'settings.access' },
 ];
 
 export function Sidebar() {
@@ -60,7 +60,7 @@ export function Sidebar() {
         </p>
         {visibleNavigation.map((item) => {
           const isActive = location.pathname === item.href ||
-            (item.href !== '/' && location.pathname.startsWith(item.href));
+            (item.href !== '/app' && location.pathname.startsWith(item.href));
 
           return (
             <NavLink

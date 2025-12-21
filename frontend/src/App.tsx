@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
+import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SettingsPage } from '@/pages/SettingsPage';
@@ -23,9 +24,13 @@ export function App() {
     <BrowserRouter>
       <WebSocketProvider>
         <Routes>
+          {/* Public routes */}
+          <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
+
+          {/* Protected app routes */}
           <Route
-            path="/"
+            path="/app"
             element={
               <ProtectedRoute>
                 <RootLayout />

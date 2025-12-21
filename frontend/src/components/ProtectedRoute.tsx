@@ -19,7 +19,7 @@ export function ProtectedRoute({
   permission,
   permissions,
   roles,
-  redirectTo = '/',
+  redirectTo = '/app',
 }: ProtectedRouteProps) {
   const { isAuthenticated, isLoading } = useAuth();
   const { hasPermission, hasAnyPermission, hasRole } = usePermissions();
