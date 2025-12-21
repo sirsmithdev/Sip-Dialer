@@ -29,6 +29,28 @@ class Settings(BaseSettings):
     # ==========================================================================
     database_url: str = "postgresql+asyncpg://autodialer:autodialer_secret@localhost:5432/autodialer"
 
+    @property
+    def async_database_url(self) -> str:
+        """Get database URL with asyncpg driver for async SQLAlchemy."""
+        url = self.database_url
+        # Handle DO App Platform postgres:// or postgresql:// URLs
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
+    def sync_database_url(self) -> str:
+        """Get database URL with psycopg2 driver for sync SQLAlchemy."""
+        url = self.database_url
+        # Handle various postgres URL formats
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        elif "+asyncpg" in url:
+            url = url.replace("+asyncpg", "", 1)
+        return url
+
     # ==========================================================================
     # Redis
     # ==========================================================================

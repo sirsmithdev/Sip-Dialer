@@ -12,7 +12,7 @@ from app.config import settings
 
 # Create async engine
 engine = create_async_engine(
-    settings.database_url,
+    settings.async_database_url,
     echo=settings.debug,
     future=True,
     pool_pre_ping=True,
@@ -29,10 +29,9 @@ async_session_maker = async_sessionmaker(
     autoflush=False,
 )
 
-# Create sync engine for Celery tasks (convert asyncpg URL to psycopg2)
-sync_database_url = settings.database_url.replace("+asyncpg", "")
+# Create sync engine for Celery tasks
 sync_engine = create_engine(
-    sync_database_url,
+    settings.sync_database_url,
     echo=settings.debug,
     pool_pre_ping=True,
     pool_size=5,
