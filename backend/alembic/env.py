@@ -24,8 +24,16 @@ from app.models import (
 # Alembic Config object
 config = context.config
 
-# Set the SQLAlchemy URL from settings (keep asyncpg for async migrations)
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Set the SQLAlchemy URL from settings using the async URL
+# This handles conversion from postgres:// or postgresql:// to postgresql+asyncpg://
+db_url = settings.async_database_url
+# Add sslmode for DO managed databases if not present
+if "digitaloceanspaces" in db_url or "db.ondigitalocean.com" in db_url or "@db-" in db_url:
+    if "?" not in db_url:
+        db_url += "?ssl=require"
+    elif "ssl=" not in db_url:
+        db_url += "&ssl=require"
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
