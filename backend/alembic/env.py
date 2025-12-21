@@ -85,38 +85,15 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
+def do_run_migrations(connection: Connection, use_app_schema: bool = False) -> None:
     """Run migrations with a connection."""
-    from sqlalchemy import text
     import logging
     logger = logging.getLogger("alembic.env")
 
-    use_app_schema = False
-
-    # Check if this is a DO App Platform database
-    is_do_db = "db.ondigitalocean.com" in db_url or "@db-" in db_url
-
-    if is_do_db:
-        # For DO App Platform dev databases, we need to handle potential schema permission issues
-        # The database is fresh but public schema may have restricted CREATE permissions
-        # Solution: Create our own schema that we own
-        try:
-            # Try to create 'app' schema in its own transaction (autocommit mode)
-            connection.execute(text("COMMIT"))  # End any existing transaction
-            connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
-            connection.execute(text("SET search_path TO app, public"))
-            logger.info("Using 'app' schema for database tables")
-            use_app_schema = True
-        except Exception as e:
-            logger.warning(f"Could not create app schema: {e}")
-            # Rollback any failed transaction and try with public schema
-            try:
-                connection.execute(text("ROLLBACK"))
-            except Exception:
-                pass
-
     if use_app_schema:
+        logger.info("Configuring alembic to use 'app' schema for version table and tables")
         # Configure alembic to use app schema for version table
+        # The search_path was already set via server_settings in connect_args
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
@@ -151,12 +128,13 @@ async def run_async_migrations() -> None:
         ssl_context.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ssl_context
 
+    use_app_schema = False
+
     # For DO databases, first create the app schema, then set search_path
     if is_do_db:
         logger.info("DO database detected - creating app schema first")
-        # First connection: create the schema
+        # First connection: create the schema using direct asyncpg
         import asyncpg
-        from urllib.parse import urlparse
 
         parsed = urlparse(db_url)
         try:
@@ -172,14 +150,16 @@ async def run_async_migrations() -> None:
             try:
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
                 logger.info("Created 'app' schema successfully")
+                use_app_schema = True
             finally:
                 await conn.close()
         except Exception as e:
             logger.warning(f"Could not create app schema: {e}")
 
-        # Now set server_settings to use the app schema
-        connect_args["server_settings"] = {"search_path": "app,public"}
-        logger.info("Setting search_path to app,public via server_settings")
+        if use_app_schema:
+            # Set server_settings to use the app schema for all subsequent queries
+            connect_args["server_settings"] = {"search_path": "app,public"}
+            logger.info("Setting search_path to app,public via server_settings")
 
     connectable = create_async_engine(
         db_url,
@@ -188,7 +168,8 @@ async def run_async_migrations() -> None:
     )
 
     async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+        # Pass the use_app_schema flag to configure alembic correctly
+        await connection.run_sync(lambda conn: do_run_migrations(conn, use_app_schema))
 
     await connectable.dispose()
 
