@@ -114,10 +114,20 @@ def do_run_migrations(connection: Connection, use_app_schema: bool = False) -> N
 async def run_async_migrations() -> None:
     """Run migrations in async mode."""
     import logging
+    import os
     logger = logging.getLogger("alembic.env")
 
     # Check if this is a DO App Platform database
-    is_do_db = "db.ondigitalocean.com" in db_url or "@db-" in db_url
+    # Detection: check URL patterns, port 25060, or explicit env var
+    is_do_db = (
+        "db.ondigitalocean.com" in db_url or
+        "@db-" in db_url or
+        ":25060/" in db_url or
+        os.environ.get("APP_ENV") == "production"
+    )
+
+    logger.info(f"Database URL (masked): ...{db_url[-50:] if len(db_url) > 50 else db_url}")
+    logger.info(f"Detected as DO database: {is_do_db}, use_ssl: {use_ssl}")
 
     # Build connect_args for SSL if needed
     connect_args = {}
@@ -137,15 +147,18 @@ async def run_async_migrations() -> None:
         import asyncpg
 
         parsed = urlparse(db_url)
+        logger.info(f"Connecting to: {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}")
         try:
             # Connect directly with asyncpg to create schema
+            ssl_arg = connect_args.get("ssl", False) if use_ssl else False
+            logger.info(f"Using SSL: {bool(ssl_arg)}")
             conn = await asyncpg.connect(
                 host=parsed.hostname,
                 port=parsed.port or 5432,
                 user=parsed.username,
                 password=parsed.password,
                 database=parsed.path.lstrip('/'),
-                ssl=connect_args.get("ssl", False) if use_ssl else False
+                ssl=ssl_arg
             )
             try:
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
@@ -154,12 +167,14 @@ async def run_async_migrations() -> None:
             finally:
                 await conn.close()
         except Exception as e:
-            logger.warning(f"Could not create app schema: {e}")
+            logger.error(f"Could not create app schema: {type(e).__name__}: {e}")
 
         if use_app_schema:
             # Set server_settings to use the app schema for all subsequent queries
             connect_args["server_settings"] = {"search_path": "app,public"}
             logger.info("Setting search_path to app,public via server_settings")
+    else:
+        logger.info("Not a DO database, using public schema")
 
     connectable = create_async_engine(
         db_url,
