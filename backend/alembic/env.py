@@ -113,9 +113,12 @@ def do_run_migrations(connection: Connection, use_app_schema: bool = False) -> N
 
 async def run_async_migrations() -> None:
     """Run migrations in async mode."""
-    import logging
     import os
-    logger = logging.getLogger("alembic.env")
+    import sys
+
+    # Use print for debugging since alembic logging may not be configured yet
+    def debug(msg):
+        print(f"[ALEMBIC-DEBUG] {msg}", file=sys.stderr, flush=True)
 
     # Check if this is a DO App Platform database
     # Detection: check URL patterns, port 25060, or explicit env var
@@ -126,8 +129,9 @@ async def run_async_migrations() -> None:
         os.environ.get("APP_ENV") == "production"
     )
 
-    logger.info(f"Database URL (masked): ...{db_url[-50:] if len(db_url) > 50 else db_url}")
-    logger.info(f"Detected as DO database: {is_do_db}, use_ssl: {use_ssl}")
+    debug(f"Database URL (masked): ...{db_url[-50:] if len(db_url) > 50 else db_url}")
+    debug(f"Detected as DO database: {is_do_db}, use_ssl: {use_ssl}")
+    debug(f"APP_ENV: {os.environ.get('APP_ENV', 'not set')}")
 
     # Build connect_args for SSL if needed
     connect_args = {}
@@ -142,16 +146,16 @@ async def run_async_migrations() -> None:
 
     # For DO databases, first create the app schema, then set search_path
     if is_do_db:
-        logger.info("DO database detected - creating app schema first")
+        debug("DO database detected - creating app schema first")
         # First connection: create the schema using direct asyncpg
         import asyncpg
 
         parsed = urlparse(db_url)
-        logger.info(f"Connecting to: {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}")
+        debug(f"Connecting to: {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}")
         try:
             # Connect directly with asyncpg to create schema
             ssl_arg = connect_args.get("ssl", False) if use_ssl else False
-            logger.info(f"Using SSL: {bool(ssl_arg)}")
+            debug(f"Using SSL: {bool(ssl_arg)}")
             conn = await asyncpg.connect(
                 host=parsed.hostname,
                 port=parsed.port or 5432,
@@ -162,19 +166,21 @@ async def run_async_migrations() -> None:
             )
             try:
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
-                logger.info("Created 'app' schema successfully")
+                debug("Created 'app' schema successfully")
                 use_app_schema = True
             finally:
                 await conn.close()
         except Exception as e:
-            logger.error(f"Could not create app schema: {type(e).__name__}: {e}")
+            debug(f"ERROR: Could not create app schema: {type(e).__name__}: {e}")
+            import traceback
+            debug(f"Traceback: {traceback.format_exc()}")
 
         if use_app_schema:
             # Set server_settings to use the app schema for all subsequent queries
             connect_args["server_settings"] = {"search_path": "app,public"}
-            logger.info("Setting search_path to app,public via server_settings")
+            debug("Setting search_path to app,public via server_settings")
     else:
-        logger.info("Not a DO database, using public schema")
+        debug("Not a DO database, using public schema")
 
     connectable = create_async_engine(
         db_url,
