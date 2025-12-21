@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "digitalocean": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@digitalocean/mcp",
+        "--services",
+        "droplets,databases,apps,spaces"
+      ],
+      "env": {
+        "DIGITALOCEAN_API_TOKEN": "dop_v1_2524505a4e0bf931fb6e06e457da8df7a37b8a9bffc8efceb3de1872c0bca609"
+      }
+    }
+  }
+}

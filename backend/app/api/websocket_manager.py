@@ -85,8 +85,19 @@ class ConnectionManager:
             self.disconnect(ws, user_id)
 
     async def start_redis_subscriber(self) -> None:
-        """Start the Redis pub/sub listener in background."""
+        """Start the Redis pub/sub listener in background (optional if Redis unavailable)."""
         if self._running:
+            return
+
+        # Check if Redis is available before starting subscriber
+        try:
+            from app.config import settings
+            if not settings.redis_url or settings.redis_url == "redis://localhost:6379/0":
+                # Check if we can actually connect
+                redis = await get_redis()
+                await redis.ping()
+        except Exception as e:
+            logger.warning(f"Redis not available, WebSocket pub/sub disabled: {e}")
             return
 
         self._running = True
@@ -189,4 +200,11 @@ async def publish_ws_event(channel: str, event_type: str, data: dict) -> None:
         await redis.publish(channel, message)
         logger.debug(f"Published to {channel}: {event_type}")
     except Exception as e:
-        logger.error(f"Failed to publish WebSocket event: {e}")
+        # Redis is optional - log warning but don't fail
+        logger.debug(f"Redis publish skipped (not available): {e}")
+        # Fall back to direct broadcast if Redis unavailable
+        await manager.broadcast({
+            "type": event_type,
+            "data": data,
+            "channel": channel
+        })
