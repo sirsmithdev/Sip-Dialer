@@ -136,6 +136,12 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """Run migrations in async mode."""
+    import logging
+    logger = logging.getLogger("alembic.env")
+
+    # Check if this is a DO App Platform database
+    is_do_db = "db.ondigitalocean.com" in db_url or "@db-" in db_url
+
     # Build connect_args for SSL if needed
     connect_args = {}
     if use_ssl:
@@ -144,6 +150,11 @@ async def run_async_migrations() -> None:
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ssl_context
+
+    # For DO databases, set search_path at connection time via server_settings
+    if is_do_db:
+        connect_args["server_settings"] = {"search_path": "app,public"}
+        logger.info("Setting search_path to app,public via server_settings")
 
     connectable = create_async_engine(
         db_url,
