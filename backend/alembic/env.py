@@ -91,16 +91,31 @@ def do_run_migrations(connection: Connection) -> None:
     import logging
     logger = logging.getLogger("alembic.env")
 
-    # For DO App Platform dev databases, we need to handle potential schema permission issues
-    # The database is fresh but public schema may have restricted CREATE permissions
-    # Solution: Create our own schema that we own
-    try:
-        # Create 'app' schema that we'll own
-        connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
-        connection.execute(text("SET search_path TO app, public"))
-        connection.commit()
-        logger.info("Using 'app' schema for database tables")
+    use_app_schema = False
 
+    # Check if this is a DO App Platform database
+    is_do_db = "db.ondigitalocean.com" in db_url or "@db-" in db_url
+
+    if is_do_db:
+        # For DO App Platform dev databases, we need to handle potential schema permission issues
+        # The database is fresh but public schema may have restricted CREATE permissions
+        # Solution: Create our own schema that we own
+        try:
+            # Try to create 'app' schema in its own transaction (autocommit mode)
+            connection.execute(text("COMMIT"))  # End any existing transaction
+            connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
+            connection.execute(text("SET search_path TO app, public"))
+            logger.info("Using 'app' schema for database tables")
+            use_app_schema = True
+        except Exception as e:
+            logger.warning(f"Could not create app schema: {e}")
+            # Rollback any failed transaction and try with public schema
+            try:
+                connection.execute(text("ROLLBACK"))
+            except Exception:
+                pass
+
+    if use_app_schema:
         # Configure alembic to use app schema for version table
         context.configure(
             connection=connection,
@@ -108,9 +123,12 @@ def do_run_migrations(connection: Connection) -> None:
             version_table_schema="app",
             include_schemas=True,
         )
-    except Exception as e:
-        logger.warning(f"Could not create app schema, using public: {e}")
-        context.configure(connection=connection, target_metadata=target_metadata)
+    else:
+        # Use default public schema
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata
+        )
 
     with context.begin_transaction():
         context.run_migrations()
