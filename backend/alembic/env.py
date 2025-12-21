@@ -151,8 +151,33 @@ async def run_async_migrations() -> None:
         ssl_context.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ssl_context
 
-    # For DO databases, set search_path at connection time via server_settings
+    # For DO databases, first create the app schema, then set search_path
     if is_do_db:
+        logger.info("DO database detected - creating app schema first")
+        # First connection: create the schema
+        import asyncpg
+        from urllib.parse import urlparse
+
+        parsed = urlparse(db_url)
+        try:
+            # Connect directly with asyncpg to create schema
+            conn = await asyncpg.connect(
+                host=parsed.hostname,
+                port=parsed.port or 5432,
+                user=parsed.username,
+                password=parsed.password,
+                database=parsed.path.lstrip('/'),
+                ssl=connect_args.get("ssl", False) if use_ssl else False
+            )
+            try:
+                await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
+                logger.info("Created 'app' schema successfully")
+            finally:
+                await conn.close()
+        except Exception as e:
+            logger.warning(f"Could not create app schema: {e}")
+
+        # Now set server_settings to use the app schema
         connect_args["server_settings"] = {"search_path": "app,public"}
         logger.info("Setting search_path to app,public via server_settings")
 
