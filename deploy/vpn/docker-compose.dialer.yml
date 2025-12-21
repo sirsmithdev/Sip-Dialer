@@ -1,0 +1,100 @@
+# =============================================================================
+# Docker Compose for Dialer Engine on VPN Gateway Droplet
+# =============================================================================
+# This compose file runs the dialer engine on the VPN gateway droplet,
+# allowing it to communicate with the UCM6302 PBX through the IPsec tunnel.
+#
+# Prerequisites:
+#   - VPN tunnel is established and working
+#   - Can ping UCM at 192.168.150.10 (or your UCM IP)
+#   - Docker and Docker Compose installed
+#
+# Usage:
+#   1. Copy this file to /opt/sip-dialer/docker-compose.yml
+#   2. Copy .env.example to .env and configure
+#   3. Run: docker compose up -d
+#   4. Check logs: docker compose logs -f dialer-engine
+# =============================================================================
+
+services:
+  dialer-engine:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/sip-dialer-dialer:latest
+    container_name: sip-dialer-engine
+    # Use host network for direct SIP/RTP communication with UCM
+    # This is required because SIP/RTP need direct UDP access
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      # =======================================================================
+      # API Connection (your DO App Platform API)
+      # =======================================================================
+      - API_URL=${API_URL:-https://api.yourdomain.com}
+
+      # =======================================================================
+      # Database (DO Managed PostgreSQL)
+      # =======================================================================
+      - DATABASE_URL=${DATABASE_URL}
+
+      # =======================================================================
+      # Redis (DO Managed Redis)
+      # =======================================================================
+      - REDIS_URL=${REDIS_URL}
+
+      # =======================================================================
+      # Encryption (must match API)
+      # =======================================================================
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+      # =======================================================================
+      # SIP Configuration (loaded from DB, but can override here)
+      # =======================================================================
+      # UCM IP accessible via VPN tunnel
+      - SIP_SERVER=${SIP_SERVER:-192.168.150.10}
+      - SIP_PORT=${SIP_PORT:-5060}
+      # Local port for dialer (don't conflict with UCM's 5060)
+      - LOCAL_SIP_PORT=${LOCAL_SIP_PORT:-5061}
+
+      # =======================================================================
+      # RTP Port Range
+      # =======================================================================
+      - RTP_PORT_START=${RTP_PORT_START:-10000}
+      - RTP_PORT_END=${RTP_PORT_END:-20000}
+
+      # =======================================================================
+      # Audio Storage
+      # =======================================================================
+      - AUDIO_BASE_PATH=/var/lib/autodialer/audio
+      # S3/Spaces configuration (for audio file access)
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_BUCKET=${S3_BUCKET:-sip-dialer-audio}
+      - S3_SECURE=${S3_SECURE:-true}
+
+      # =======================================================================
+      # Logging
+      # =======================================================================
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      # Audio file cache
+      - audio_files:/var/lib/autodialer/audio
+
+    # Health check - verify PJSUA2 is loaded
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pjsua2; print('PJSUA2 OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  audio_files:
+    driver: local

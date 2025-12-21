@@ -43,14 +43,44 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
 
     # ==========================================================================
-    # MinIO / S3
+    # S3-Compatible Storage (MinIO for dev, DO Spaces for prod)
     # ==========================================================================
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
-    minio_secure: bool = False
-    minio_bucket_audio: str = "audio-files"
-    minio_bucket_recordings: str = "call-recordings"
+    # For local development with MinIO:
+    #   S3_ENDPOINT=localhost:9000, S3_SECURE=false
+    # For Digital Ocean Spaces:
+    #   S3_ENDPOINT=nyc3.digitaloceanspaces.com, S3_SECURE=true
+    s3_endpoint: str = "localhost:9000"
+    s3_access_key: str = "minioadmin"
+    s3_secret_key: str = "minioadmin"
+    s3_secure: bool = False
+    s3_bucket: str = "audio-files"
+    s3_bucket_recordings: str = "call-recordings"
+    s3_region: str = "us-east-1"  # For DO Spaces, use nyc3, sfo3, etc.
+
+    # Legacy MinIO aliases (for backward compatibility)
+    @property
+    def minio_endpoint(self) -> str:
+        return self.s3_endpoint
+
+    @property
+    def minio_access_key(self) -> str:
+        return self.s3_access_key
+
+    @property
+    def minio_secret_key(self) -> str:
+        return self.s3_secret_key
+
+    @property
+    def minio_secure(self) -> bool:
+        return self.s3_secure
+
+    @property
+    def minio_bucket_audio(self) -> str:
+        return self.s3_bucket
+
+    @property
+    def minio_bucket_recordings(self) -> str:
+        return self.s3_bucket_recordings
 
     # ==========================================================================
     # Default SIP Settings (configurable via UI)
