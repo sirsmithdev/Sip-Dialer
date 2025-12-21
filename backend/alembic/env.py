@@ -2,11 +2,13 @@
 Alembic environment configuration.
 """
 import asyncio
+import ssl
 from logging.config import fileConfig
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 
@@ -24,15 +26,41 @@ from app.models import (
 # Alembic Config object
 config = context.config
 
-# Set the SQLAlchemy URL from settings using the async URL
-# This handles conversion from postgres:// or postgresql:// to postgresql+asyncpg://
-db_url = settings.async_database_url
-# Add sslmode for DO managed databases if not present
-if "digitaloceanspaces" in db_url or "db.ondigitalocean.com" in db_url or "@db-" in db_url:
-    if "?" not in db_url:
-        db_url += "?ssl=require"
-    elif "ssl=" not in db_url:
-        db_url += "&ssl=require"
+
+def get_async_url_and_ssl():
+    """
+    Get the async database URL and SSL context for asyncpg.
+
+    asyncpg doesn't accept sslmode parameter - it needs ssl=True or an SSL context.
+    We strip sslmode from the URL and return SSL settings separately.
+    """
+    db_url = settings.async_database_url
+    use_ssl = False
+
+    # Check if this is a DO managed database
+    if "db.ondigitalocean.com" in db_url or "@db-" in db_url:
+        use_ssl = True
+
+    # Parse URL and remove sslmode parameter (asyncpg doesn't accept it)
+    parsed = urlparse(db_url)
+    if parsed.query:
+        params = parse_qs(parsed.query)
+        # Check if sslmode was specified
+        if "sslmode" in params:
+            sslmode = params.pop("sslmode", [""])[0]
+            if sslmode in ("require", "verify-ca", "verify-full"):
+                use_ssl = True
+        # Remove any ssl parameter too (we'll handle it via connect_args)
+        params.pop("ssl", None)
+        # Rebuild URL without ssl params
+        new_query = urlencode({k: v[0] for k, v in params.items()}, doseq=False) if params else ""
+        db_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+
+    return db_url, use_ssl
+
+
+# Get clean URL and SSL settings
+db_url, use_ssl = get_async_url_and_ssl()
 config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging
@@ -67,10 +95,19 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """Run migrations in async mode."""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    # Build connect_args for SSL if needed
+    connect_args = {}
+    if use_ssl:
+        # Create SSL context that doesn't verify certificates (for managed DBs)
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        connect_args["ssl"] = ssl_context
+
+    connectable = create_async_engine(
+        db_url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:
