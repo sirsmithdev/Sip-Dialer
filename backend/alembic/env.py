@@ -35,37 +35,26 @@ def debug(msg):
 
 def get_async_url_and_ssl():
     """
-    Get the async database URL, SSL context, and target schema for asyncpg.
+    Get the async database URL and SSL settings for asyncpg.
 
     asyncpg doesn't accept sslmode parameter - it needs ssl=True or an SSL context.
     We strip sslmode from the URL and return SSL settings separately.
-
-    For DigitalOcean App Platform dev databases, the only writable schema is one
-    that matches the database username (which is also the database name).
     """
     db_url = settings.async_database_url
     use_ssl = False
-    target_schema = None  # None means use public schema
 
     # Parse URL to get components
     parsed = urlparse(db_url)
 
-    # Check if this is a DO managed database
+    # Check if this is a DO managed database (requires SSL)
     is_do_db = (
         "db.ondigitalocean.com" in db_url or
-        "@db-" in db_url or
         ":25060/" in db_url
     )
 
     if is_do_db:
         use_ssl = True
-        # For DO App Platform dev databases, the writable schema is the username
-        # The username is typically the same as the database name
-        if parsed.username:
-            target_schema = parsed.username
-            debug(f"DigitalOcean database detected - will use schema: {target_schema}")
-        else:
-            debug("DigitalOcean database detected but couldn't extract username")
+        debug("DigitalOcean managed database detected - using SSL")
 
     # Handle query parameters
     if parsed.query:
@@ -81,11 +70,11 @@ def get_async_url_and_ssl():
         new_query = urlencode({k: v[0] for k, v in params.items()}, doseq=False) if params else ""
         db_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-    return db_url, use_ssl, target_schema
+    return db_url, use_ssl
 
 
-# Get clean URL, SSL settings, and target schema
-db_url, use_ssl, target_schema = get_async_url_and_ssl()
+# Get clean URL and SSL settings
+db_url, use_ssl = get_async_url_and_ssl()
 config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging
@@ -110,27 +99,13 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection, schema_name: str = None) -> None:
+def do_run_migrations(connection: Connection) -> None:
     """Run migrations with a connection."""
-    from sqlalchemy import text
-
-    if schema_name:
-        debug(f"Running migrations in schema: {schema_name}")
-        # Set search_path so tables are created in the target schema
-        connection.execute(text(f"SET search_path TO {schema_name}, public"))
-
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            version_table_schema=schema_name,
-            include_schemas=True,
-        )
-    else:
-        debug("Running migrations in public schema")
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata
-        )
+    debug("Running migrations in public schema")
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata
+    )
 
     with context.begin_transaction():
         context.run_migrations()
@@ -140,9 +115,9 @@ def do_run_migrations(connection: Connection, schema_name: str = None) -> None:
 async def run_async_migrations() -> None:
     """Run migrations in async mode."""
     debug(f"Database URL (masked): ...{db_url[-50:] if len(db_url) > 50 else db_url}")
-    debug(f"use_ssl: {use_ssl}, target_schema: {target_schema}")
+    debug(f"use_ssl: {use_ssl}")
 
-    # Build connect_args for SSL and schema
+    # Build connect_args for SSL
     connect_args = {}
     if use_ssl:
         # Create SSL context that doesn't verify certificates (for managed DBs)
@@ -152,11 +127,6 @@ async def run_async_migrations() -> None:
         connect_args["ssl"] = ssl_context
         debug("Using SSL context for database connection")
 
-    # Set search_path for DO databases so tables go in the right schema
-    if target_schema:
-        connect_args["server_settings"] = {"search_path": f"{target_schema}, public"}
-        debug(f"Set search_path to: {target_schema}, public")
-
     connectable = create_async_engine(
         db_url,
         poolclass=pool.NullPool,
@@ -165,7 +135,7 @@ async def run_async_migrations() -> None:
 
     try:
         async with connectable.connect() as connection:
-            await connection.run_sync(lambda conn: do_run_migrations(conn, target_schema))
+            await connection.run_sync(do_run_migrations)
     except Exception as e:
         debug(f"Migration error: {type(e).__name__}: {e}")
         import traceback
