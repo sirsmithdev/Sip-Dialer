@@ -3,7 +3,7 @@ Database session management.
 """
 import ssl
 from contextlib import contextmanager
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator, Generator, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine
@@ -19,15 +19,31 @@ def get_async_url_and_connect_args():
 
     asyncpg doesn't accept sslmode parameter - it needs ssl=True or an SSL context.
     We strip sslmode from the URL and return SSL settings separately.
+
+    For DigitalOcean App Platform dev databases, the only writable schema is one
+    that matches the database username (which is also the database name).
     """
     db_url = settings.async_database_url
     connect_args = {}
+    target_schema: Optional[str] = None
+
+    # Parse URL to get components
+    parsed = urlparse(db_url)
 
     # Check if this is a DO managed database
-    use_ssl = "db.ondigitalocean.com" in db_url or "@db-" in db_url
+    is_do_db = (
+        "db.ondigitalocean.com" in db_url or
+        "@db-" in db_url or
+        ":25060/" in db_url
+    )
 
-    # Parse URL and remove sslmode parameter (asyncpg doesn't accept it)
-    parsed = urlparse(db_url)
+    use_ssl = is_do_db
+
+    # For DO App Platform dev databases, the writable schema is the username
+    if is_do_db and parsed.username:
+        target_schema = parsed.username
+
+    # Handle query parameters
     if parsed.query:
         params = parse_qs(parsed.query)
         # Check if sslmode was specified
@@ -48,20 +64,16 @@ def get_async_url_and_connect_args():
         ssl_context.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ssl_context
 
-    return db_url, connect_args
+    return db_url, connect_args, target_schema, is_do_db
 
 
 # Get clean URL and connect_args for async engine
-async_db_url, async_connect_args = get_async_url_and_connect_args()
+async_db_url, async_connect_args, _do_schema, _is_do_db = get_async_url_and_connect_args()
 
-# Check if this is a DO managed database that needs app schema
-_is_do_db = "db.ondigitalocean.com" in async_db_url or "@db-" in async_db_url
-
-# For DO databases, add server_settings to set search_path
-if _is_do_db:
-    # Set search_path to look in db schema first (DO dev database default),
-    # then app schema, then public
-    async_connect_args["server_settings"] = {"search_path": "db, app, public"}
+# For DO databases, add server_settings to set search_path using the detected schema
+if _is_do_db and _do_schema:
+    # Set search_path to use the schema that matches the database username
+    async_connect_args["server_settings"] = {"search_path": f"{_do_schema}, public"}
 
 # Create async engine
 engine = create_async_engine(
@@ -91,8 +103,9 @@ sync_connect_args = {}
 # For DO databases, configure SSL and schema
 if _is_do_db:
     # psycopg2 uses options parameter for search_path
-    # Include db schema for DO dev databases
-    sync_connect_args["options"] = "-c search_path=db,app,public"
+    # Use the detected schema from the database username
+    if _do_schema:
+        sync_connect_args["options"] = f"-c search_path={_do_schema},public"
     # Add sslmode if not present in URL
     if "sslmode" not in sync_db_url:
         if "?" in sync_db_url:
