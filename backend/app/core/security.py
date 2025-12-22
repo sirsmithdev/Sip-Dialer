@@ -1,6 +1,7 @@
 """
 Security utilities for authentication and password handling.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 
@@ -10,19 +11,48 @@ from cryptography.fernet import Fernet
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Encryption for sensitive data (like SIP passwords)
 _fernet = None
+_encryption_key_valid = True
 
 
 def get_fernet() -> Fernet:
-    """Get or create Fernet instance for encryption."""
-    global _fernet
+    """Get or create Fernet instance for encryption.
+
+    If the configured ENCRYPTION_KEY is invalid, generates a temporary key
+    and logs a warning. This allows the app to start but new encrypted data
+    won't be recoverable if the key changes.
+    """
+    global _fernet, _encryption_key_valid
     if _fernet is None:
-        _fernet = Fernet(settings.encryption_key.encode())
+        try:
+            _fernet = Fernet(settings.encryption_key.encode())
+            logger.info("Fernet encryption initialized with configured key")
+        except (ValueError, TypeError) as e:
+            # Invalid key format - generate a temporary one
+            _encryption_key_valid = False
+            temp_key = Fernet.generate_key()
+            _fernet = Fernet(temp_key)
+            logger.warning(
+                f"ENCRYPTION_KEY is invalid ({e}). Generated temporary key. "
+                "Set a valid 32-byte base64 Fernet key in ENCRYPTION_KEY env var. "
+                "Any data encrypted with this temporary key will be unrecoverable "
+                "after restart. Generate a valid key with: "
+                "python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
+            )
     return _fernet
+
+
+def is_encryption_key_valid() -> bool:
+    """Check if the configured encryption key is valid."""
+    # Ensure fernet is initialized
+    get_fernet()
+    return _encryption_key_valid
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
