@@ -22,7 +22,40 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create EmailType ENUM
+    # Create EmailType ENUM using raw SQL with IF NOT EXISTS for safety
+    op.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'emailtype') THEN
+                CREATE TYPE emailtype AS ENUM (
+                    'campaign_report',
+                    'daily_summary',
+                    'weekly_summary',
+                    'campaign_completed',
+                    'system_alert',
+                    'test'
+                );
+            END IF;
+        END$$;
+    """)
+
+    # Create EmailStatus ENUM using raw SQL with IF NOT EXISTS for safety
+    op.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'emailstatus') THEN
+                CREATE TYPE emailstatus AS ENUM (
+                    'pending',
+                    'sending',
+                    'sent',
+                    'failed',
+                    'bounced'
+                );
+            END IF;
+        END$$;
+    """)
+
+    # Define enum types for table columns (create_type=False since we created them above)
     email_type_enum = postgresql.ENUM(
         'campaign_report',
         'daily_summary',
@@ -31,11 +64,9 @@ def upgrade() -> None:
         'system_alert',
         'test',
         name='emailtype',
-        create_type=True
+        create_type=False
     )
-    email_type_enum.create(op.get_bind(), checkfirst=True)
 
-    # Create EmailStatus ENUM
     email_status_enum = postgresql.ENUM(
         'pending',
         'sending',
@@ -43,9 +74,8 @@ def upgrade() -> None:
         'failed',
         'bounced',
         name='emailstatus',
-        create_type=True
+        create_type=False
     )
-    email_status_enum.create(op.get_bind(), checkfirst=True)
 
     # Create email_settings table
     op.create_table(
