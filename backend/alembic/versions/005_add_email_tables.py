@@ -22,37 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Get database connection to check if types exist
-    connection = op.get_bind()
-
-    # Check and create EmailType ENUM using connection.execute for proper transaction handling
-    result = connection.execute(sa.text("SELECT 1 FROM pg_type WHERE typname = 'emailtype'"))
-    if not result.fetchone():
-        connection.execute(sa.text("""
-            CREATE TYPE emailtype AS ENUM (
-                'campaign_report',
-                'daily_summary',
-                'weekly_summary',
-                'campaign_completed',
-                'system_alert',
-                'test'
-            )
-        """))
-
-    # Check and create EmailStatus ENUM using connection.execute for proper transaction handling
-    result = connection.execute(sa.text("SELECT 1 FROM pg_type WHERE typname = 'emailstatus'"))
-    if not result.fetchone():
-        connection.execute(sa.text("""
-            CREATE TYPE emailstatus AS ENUM (
-                'pending',
-                'sending',
-                'sent',
-                'failed',
-                'bounced'
-            )
-        """))
-
-    # Define enum types for table columns (create_type=False since we created them above)
+    # Define enum types first
     email_type_enum = postgresql.ENUM(
         'campaign_report',
         'daily_summary',
@@ -73,6 +43,12 @@ def upgrade() -> None:
         name='emailstatus',
         create_type=False
     )
+
+    # Create ENUM types using the proper alembic/SQLAlchemy method
+    # This ensures proper binding to the connection
+    bind = op.get_bind()
+    email_type_enum.create(bind, checkfirst=True)
+    email_status_enum.create(bind, checkfirst=True)
 
     # Create email_settings table
     op.create_table(
