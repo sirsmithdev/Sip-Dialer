@@ -1,18 +1,18 @@
 #!/bin/bash
 
-echo "Starting API..."
+echo "Starting API with migrations..."
+echo "DATABASE_URL starts with: ${DATABASE_URL:0:30}..."
 
-# Run database migrations first (with timeout to prevent hanging)
+# Run database migrations first
 echo "Running Alembic migrations..."
-timeout 60 python -m alembic upgrade head
+python -m alembic upgrade head
 migration_status=$?
 
 if [ $migration_status -eq 0 ]; then
     echo "Migrations completed successfully."
-elif [ $migration_status -eq 124 ]; then
-    echo "WARNING: Migrations timed out. Continuing anyway..."
 else
-    echo "WARNING: Migrations exited with status $migration_status"
+    echo "WARNING: Migrations failed with status $migration_status"
+    echo "Tables may already exist or there may be a connection issue."
     echo "Continuing to start the server anyway..."
 fi
 
