@@ -526,7 +526,7 @@ class DialerEngine:
                 "error": error,
                 "last_updated": datetime.utcnow().isoformat()
             })
-            await r.set("dialer:sip_status", status_data, ex=60)  # Expire after 60 seconds
+            await r.set("dialer:sip_status", status_data, ex=120)  # Expire after 120 seconds
 
             logger.debug(f"Published SIP status: {status}")
             await r.aclose()
@@ -1028,51 +1028,70 @@ class DialerEngine:
             logger.error(f"Failed to publish call manager status: {e}")
 
     async def _listen_for_test_calls(self):
-        """Listen for test call requests via Redis."""
+        """Listen for test call requests via Redis with automatic reconnection."""
         import json
 
-        logger.info(f"Listening for test calls on Redis: {self.redis_url}")
+        while self.running:
+            r = None
+            pubsub = None
+            try:
+                logger.info(f"Connecting to Redis for test calls: {self.redis_url}")
+                r = self._get_redis_client()
+                pubsub = r.pubsub()
+                await pubsub.subscribe("dialer:test_call")
+                logger.info("Listening for test calls on Redis channel: dialer:test_call")
 
-        try:
-            r = self._get_redis_client()
-            pubsub = r.pubsub()
-            await pubsub.subscribe("dialer:test_call")
+                async for message in pubsub.listen():
+                    if not self.running:
+                        break
+                    if message["type"] == "message":
+                        try:
+                            data = json.loads(message["data"])
+                            destination = data.get("destination")
+                            caller_id = data.get("caller_id", "")
+                            audio_file = data.get("audio_file")  # Optional audio file to play
 
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    try:
-                        data = json.loads(message["data"])
-                        destination = data.get("destination")
-                        caller_id = data.get("caller_id", "")
-                        audio_file = data.get("audio_file")  # Optional audio file to play
+                            if destination:
+                                logger.info(f"Received test call request: {destination}")
 
-                        if destination:
-                            logger.info(f"Received test call request: {destination}")
+                                # If audio file specified, create a simple IVR flow
+                                ivr_flow = None
+                                if audio_file:
+                                    ivr_flow = {
+                                        "nodes": [
+                                            {"id": "start", "type": "start", "data": {}},
+                                            {"id": "play", "type": "play_audio", "data": {"audio_file_id": audio_file}},
+                                            {"id": "hangup", "type": "hangup", "data": {}}
+                                        ],
+                                        "edges": [
+                                            {"source": "start", "target": "play"},
+                                            {"source": "play", "target": "hangup"}
+                                        ],
+                                        "start_node": "start"
+                                    }
 
-                            # If audio file specified, create a simple IVR flow
-                            ivr_flow = None
-                            if audio_file:
-                                ivr_flow = {
-                                    "nodes": [
-                                        {"id": "start", "type": "start", "data": {}},
-                                        {"id": "play", "type": "play_audio", "data": {"audio_file_id": audio_file}},
-                                        {"id": "hangup", "type": "hangup", "data": {}}
-                                    ],
-                                    "edges": [
-                                        {"source": "start", "target": "play"},
-                                        {"source": "play", "target": "hangup"}
-                                    ],
-                                    "start_node": "start"
-                                }
+                                call = await self.make_call(destination, caller_id, ivr_flow)
+                                if call:
+                                    asyncio.create_task(self._monitor_test_call(call, r))
+                        except Exception as e:
+                            logger.error(f"Error processing test call request: {e}")
 
-                            call = await self.make_call(destination, caller_id, ivr_flow)
-                            if call:
-                                asyncio.create_task(self._monitor_test_call(call, r))
-                    except Exception as e:
-                        logger.error(f"Error processing test call request: {e}")
-
-        except Exception as e:
-            logger.error(f"Redis listener error: {e}")
+            except asyncio.CancelledError:
+                logger.info("Test call listener cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Redis listener error: {e}. Reconnecting in 5 seconds...")
+                await asyncio.sleep(5)
+            finally:
+                # Clean up connections
+                try:
+                    if pubsub:
+                        await pubsub.unsubscribe("dialer:test_call")
+                        await pubsub.close()
+                    if r:
+                        await r.close()
+                except Exception:
+                    pass
 
     async def _monitor_test_call(self, call, redis_client):
         """Monitor a test call and publish status updates."""
