@@ -203,6 +203,67 @@ async def get_dialer_status(
         }
 
 
+@router.post("/dialer/test-call")
+async def make_test_call(
+    phone_number: str = Query(..., description="Phone number to call"),
+    caller_id: Optional[str] = Query(None, description="Caller ID to use"),
+    audio_file: Optional[str] = Query(None, description="Audio file ID to play"),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.MANAGER))
+):
+    """
+    Make a test call to verify SIP configuration.
+
+    Sends a request to the dialer engine via Redis to place an outbound call.
+    The call will connect and optionally play an audio file if specified.
+
+    Returns:
+    - success: Whether the call request was sent
+    - message: Status message
+    """
+    import json
+    from app.db.redis import get_redis
+
+    try:
+        r = await get_redis()
+
+        # Check if dialer is online first
+        sip_status_data = await r.get("dialer:sip_status")
+        if sip_status_data:
+            sip_status = json.loads(sip_status_data)
+            if sip_status.get("status") != "registered":
+                return {
+                    "success": False,
+                    "message": "Dialer is not registered with SIP server. Please check SIP settings."
+                }
+        else:
+            return {
+                "success": False,
+                "message": "Dialer engine is not running or not connected."
+            }
+
+        # Publish test call request to Redis
+        call_request = {
+            "destination": phone_number,
+            "caller_id": caller_id or "",
+            "audio_file": audio_file
+        }
+        await r.publish("dialer:test_call", json.dumps(call_request))
+
+        logger.info(f"Test call request sent to {phone_number} by user {current_user.email}")
+
+        return {
+            "success": True,
+            "message": f"Test call initiated to {phone_number}. Check dialer status for call progress."
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to initiate test call: {e}")
+        return {
+            "success": False,
+            "message": f"Failed to initiate test call: {str(e)}"
+        }
+
+
 @router.delete("/sip", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_sip_settings(
     db: AsyncSession = Depends(get_db),
