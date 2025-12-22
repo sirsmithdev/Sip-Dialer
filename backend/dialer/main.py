@@ -35,6 +35,8 @@ from app.models.audio import AudioFile
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus, CallDisposition
 from app.models.contact import Contact
 from app.models.ivr import IVRFlow, IVRFlowVersion
+from app.models.call_log import CallLog, CallResult, CallDirection
+from app.models.survey import SurveyResponse
 
 # Import SIP engine components
 try:
@@ -1291,7 +1293,14 @@ class DialerEngine:
                 f"responses={result.survey_responses}"
             )
 
-            # TODO: Save IVR results to database
+            # Save IVR results to database
+            await self._save_ivr_results(
+                call_id=call.info.call_id,
+                campaign_id=campaign_id,
+                contact_id=contact_id,
+                ivr_result=result,
+                ivr_flow_definition=ivr_flow_definition
+            )
 
         except Exception as e:
             logger.error(f"IVR execution error: {e}")
@@ -1300,6 +1309,132 @@ class DialerEngine:
             # Clean up call if still active
             if call.info.call_id in self.active_calls:
                 del self.active_calls[call.info.call_id]
+
+    async def _save_ivr_results(
+        self,
+        call_id: str,
+        campaign_id: Optional[str],
+        contact_id: Optional[str],
+        ivr_result,
+        ivr_flow_definition: Dict
+    ):
+        """
+        Save IVR execution results to database.
+
+        This saves:
+        1. Updates CallLog with IVR completion status and DTMF inputs
+        2. Creates SurveyResponse record if survey responses exist
+        """
+        from sqlalchemy import update
+        import uuid
+
+        db_url, connect_args = self._get_async_db_url_and_connect_args()
+        engine = create_async_engine(db_url, connect_args=connect_args)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        try:
+            async with async_session() as session:
+                # Get IVR flow info
+                ivr_flow_id = ivr_flow_definition.get("flow_id")
+                ivr_flow_version = ivr_flow_definition.get("version", 1)
+
+                # Find or create CallLog for this call
+                result = await session.execute(
+                    select(CallLog).where(CallLog.unique_id == call_id)
+                )
+                call_log = result.scalar_one_or_none()
+
+                if call_log:
+                    # Update existing call log with IVR data
+                    call_log.ivr_flow_id = ivr_flow_id
+                    call_log.ivr_completed = ivr_result.completed_normally
+                    call_log.dtmf_inputs = ivr_result.dtmf_inputs
+
+                    # Add IVR metadata
+                    if call_log.call_metadata is None:
+                        call_log.call_metadata = {}
+                    call_log.call_metadata["ivr_state"] = ivr_result.state.value
+                    call_log.call_metadata["ivr_duration"] = ivr_result.duration_seconds
+                    call_log.call_metadata["ivr_last_node"] = ivr_result.last_node_id
+                    if ivr_result.error_message:
+                        call_log.call_metadata["ivr_error"] = ivr_result.error_message
+
+                    session.add(call_log)
+                    call_log_id = call_log.id
+                else:
+                    # Create new call log if one doesn't exist
+                    call_log_id = str(uuid.uuid4())
+                    new_call_log = CallLog(
+                        id=call_log_id,
+                        campaign_id=campaign_id,
+                        contact_id=contact_id,
+                        unique_id=call_id,
+                        caller_id="dialer",  # Will be overwritten if available
+                        destination="unknown",  # Will be overwritten if available
+                        direction=CallDirection.OUTBOUND,
+                        initiated_at=datetime.utcnow(),
+                        result=CallResult.ANSWERED,
+                        ivr_flow_id=ivr_flow_id,
+                        ivr_completed=ivr_result.completed_normally,
+                        dtmf_inputs=ivr_result.dtmf_inputs,
+                        call_metadata={
+                            "ivr_state": ivr_result.state.value,
+                            "ivr_duration": ivr_result.duration_seconds,
+                            "ivr_last_node": ivr_result.last_node_id
+                        }
+                    )
+                    session.add(new_call_log)
+
+                # Create SurveyResponse if there are survey responses
+                if ivr_result.survey_responses and campaign_id:
+                    # Get contact phone number
+                    phone_number = "unknown"
+                    if contact_id:
+                        contact_result = await session.execute(
+                            select(Contact).where(Contact.id == contact_id)
+                        )
+                        contact = contact_result.scalar_one_or_none()
+                        if contact:
+                            phone_number = contact.phone
+
+                    # Build responses dict with question details
+                    responses_data = {}
+                    for question_id, response in ivr_result.survey_responses.items():
+                        responses_data[question_id] = {
+                            "response": response,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+
+                    survey_response = SurveyResponse(
+                        id=str(uuid.uuid4()),
+                        call_log_id=call_log_id,
+                        campaign_id=campaign_id,
+                        contact_id=contact_id,
+                        ivr_flow_id=ivr_flow_id or "",
+                        ivr_flow_version=ivr_flow_version,
+                        phone_number=phone_number,
+                        responses=responses_data,
+                        is_complete=ivr_result.completed_normally,
+                        questions_answered=len(ivr_result.survey_responses),
+                        total_questions=len(ivr_result.survey_responses),  # Approximate
+                        started_at=datetime.utcnow() - timedelta(seconds=ivr_result.duration_seconds),
+                        completed_at=datetime.utcnow() if ivr_result.completed_normally else None,
+                        duration_seconds=int(ivr_result.duration_seconds)
+                    )
+                    session.add(survey_response)
+
+                    logger.info(
+                        f"Created SurveyResponse for call {call_id}: "
+                        f"{len(ivr_result.survey_responses)} responses"
+                    )
+
+                await session.commit()
+                logger.info(f"Saved IVR results for call {call_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to save IVR results: {e}")
+        finally:
+            await engine.dispose()
 
     async def hangup_call(self, call_id: str):
         """Hang up a call by ID."""
