@@ -122,6 +122,23 @@ export const authApi = {
   },
 };
 
+// Dialer Status Response type
+export interface DialerStatusResponse {
+  sip: {
+    status: string;
+    extension?: string;
+    server?: string;
+    active_calls?: number;
+    message?: string;
+    error?: string;
+  } | null;
+  call_manager: {
+    active_campaigns: number;
+    total_active_calls: number;
+  } | null;
+  is_online: boolean;
+}
+
 // SIP Settings API
 export const sipSettingsApi = {
   get: async (): Promise<SIPSettings> => {
@@ -146,6 +163,11 @@ export const sipSettingsApi = {
 
   delete: async (): Promise<void> => {
     await api.delete('/settings/sip');
+  },
+
+  getDialerStatus: async (): Promise<DialerStatusResponse> => {
+    const response = await api.get('/settings/dialer/status');
+    return response.data;
   },
 };
 

@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { useWebSocket, WSMessage, MessageHandler } from '@/hooks/use-websocket';
 import { useAuth } from '@/hooks/use-auth';
+import { sipSettingsApi } from '@/services/api';
 
 // Dashboard stats type
 export interface DashboardStats {
@@ -78,16 +79,39 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [sipStatus, setSipStatus] = useState<SIPStatus | null>(null);
   const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
 
+  // Fetch initial SIP status from REST API
+  const fetchInitialSipStatus = useCallback(async () => {
+    try {
+      const response = await sipSettingsApi.getDialerStatus();
+      if (response.sip) {
+        setSipStatus({
+          status: response.sip.status,
+          extension: response.sip.extension,
+          server: response.sip.server,
+          active_calls: response.sip.active_calls || 0,
+          error: response.sip.error,
+          last_updated: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      // If fetching fails, SIP status remains unknown - this is expected
+      // when the dialer isn't running or user lacks permissions
+      console.debug('Could not fetch initial SIP status:', error);
+    }
+  }, []);
+
   // Connect/disconnect based on authentication
   useEffect(() => {
     if (user) {
       connect();
+      // Fetch initial SIP status when connecting
+      fetchInitialSipStatus();
     } else {
       disconnect();
       setSipStatus(null);
       setDashboardStats(null);
     }
-  }, [user, connect, disconnect]);
+  }, [user, connect, disconnect, fetchInitialSipStatus]);
 
   // Subscribe to SIP status updates
   useEffect(() => {
