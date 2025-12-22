@@ -357,7 +357,7 @@ class DialerEngine:
     async def start(self):
         """Start the dialer engine."""
         self.running = True
-        logger.info("Starting Dialer Engine (PJSUA2 SIP Mode)...")
+        logger.info("Starting Dialer Engine v2.1.0 (PJSUA2 SIP Mode with SRTP support)...")
 
         # Check if SIP engine is available
         if not SIP_ENGINE_AVAILABLE:
@@ -400,7 +400,11 @@ class DialerEngine:
             # Get transport type from settings
             transport_type = settings.sip_transport.value if hasattr(settings.sip_transport, 'value') else str(settings.sip_transport)
 
-            # Initialize PJSIP library with correct transport
+            # Get SRTP mode from settings (convert enum to int)
+            # 0=DISABLED, 1=OPTIONAL, 2=MANDATORY
+            srtp_mode = self._get_srtp_mode(settings)
+
+            # Initialize PJSIP library with correct transport and SRTP
             self.sip_engine.initialize(
                 sip_server=settings.sip_server,
                 sip_port=settings.sip_port,
@@ -409,14 +413,16 @@ class DialerEngine:
                 rtp_port_end=settings.rtp_port_end,
                 codecs=self._map_codecs(settings.codecs),
                 log_level=3 if os.getenv("DEBUG") else 2,
-                transport=transport_type
+                transport=transport_type,
+                srtp_mode=srtp_mode
             )
 
             # Register with UCM
             self.sip_engine.register(
                 username=settings.sip_username,
                 password=settings._decrypted_password,
-                transport=transport_type
+                transport=transport_type,
+                srtp_mode=srtp_mode
             )
 
             # Wait for registration
@@ -448,6 +454,32 @@ class DialerEngine:
             "gsm": "GSM/8000",
         }
         return [codec_map.get(c, c) for c in codec_list]
+
+    def _get_srtp_mode(self, settings) -> int:
+        """Get SRTP mode as integer from settings.
+
+        Returns:
+            0 = DISABLED
+            1 = OPTIONAL
+            2 = MANDATORY
+        """
+        # Check if srtp_mode exists (new column may not exist in older databases)
+        if not hasattr(settings, 'srtp_mode') or settings.srtp_mode is None:
+            # Default to OPTIONAL for TLS transport, DISABLED for others
+            transport = settings.sip_transport.value if hasattr(settings.sip_transport, 'value') else str(settings.sip_transport)
+            if transport == "TLS":
+                logger.info("No SRTP setting found, defaulting to OPTIONAL for TLS transport")
+                return 1  # OPTIONAL
+            return 0  # DISABLED
+
+        # Convert enum to integer
+        srtp_value = settings.srtp_mode.value if hasattr(settings.srtp_mode, 'value') else str(settings.srtp_mode)
+        srtp_map = {
+            "DISABLED": 0,
+            "OPTIONAL": 1,
+            "MANDATORY": 2,
+        }
+        return srtp_map.get(srtp_value, 1)  # Default to OPTIONAL
 
     async def _wait_for_registration(self, timeout: float = 30):
         """Wait for SIP registration to complete."""

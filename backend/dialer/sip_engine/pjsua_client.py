@@ -84,7 +84,7 @@ class SIPAccount:
         self.last_error = ""
         self._pj_account: Optional[Any] = None
 
-    def create(self, server: str, port: int, username: str, password: str, transport: str = "UDP"):
+    def create(self, server: str, port: int, username: str, password: str, transport: str = "UDP", srtp_mode: int = 0):
         """Create and configure the PJSUA2 account."""
         if not PJSUA2_AVAILABLE:
             raise RuntimeError("PJSUA2 not available")
@@ -116,6 +116,19 @@ class SIPAccount:
         # Add authentication credentials
         cred = pj.AuthCredInfo("digest", "*", username, 0, password)
         acc_cfg.sipConfig.authCreds.append(cred)
+
+        # Configure SRTP (Secure RTP) for media encryption
+        # srtpUse: 0=disabled, 1=optional, 2=mandatory
+        acc_cfg.mediaConfig.srtpUse = srtp_mode
+        # srtpSecureSignaling: 0=not required, 1=require TLS/SIPS, 2=end-to-end only
+        # When using TLS transport, we can require secure signaling for SRTP
+        if transport == "TLS" and srtp_mode > 0:
+            acc_cfg.mediaConfig.srtpSecureSignaling = 1  # Require TLS for SRTP
+        else:
+            acc_cfg.mediaConfig.srtpSecureSignaling = 0  # No requirement
+
+        srtp_mode_names = {0: "DISABLED", 1: "OPTIONAL", 2: "MANDATORY"}
+        logger.info(f"Account SRTP config: srtpUse={srtp_mode_names.get(srtp_mode, 'UNKNOWN')}, srtpSecureSignaling={acc_cfg.mediaConfig.srtpSecureSignaling}")
 
         # Create the account with callback handler
         self._pj_account = _PJAccount(self)
@@ -285,6 +298,13 @@ class SIPCall:
         return None
 
 
+class SRTPMode:
+    """SRTP mode constants matching PJSUA2."""
+    DISABLED = 0   # PJMEDIA_SRTP_DISABLED
+    OPTIONAL = 1   # PJMEDIA_SRTP_OPTIONAL
+    MANDATORY = 2  # PJMEDIA_SRTP_MANDATORY
+
+
 class SIPEngine:
     """
     Main SIP engine using PJSUA2.
@@ -302,6 +322,7 @@ class SIPEngine:
         self._pjsua_thread: Optional[threading.Thread] = None
         self._running = False
         self.transport_type = "UDP"  # Default transport type
+        self.srtp_mode = SRTPMode.DISABLED  # Default SRTP mode
 
         # Configuration
         self.sip_server = ""
@@ -333,7 +354,8 @@ class SIPEngine:
         rtp_port_end: int = 20000,
         codecs: Optional[List[str]] = None,
         log_level: int = 3,
-        transport: str = "UDP"
+        transport: str = "UDP",
+        srtp_mode: int = 0
     ):
         """
         Initialize the PJSIP library and endpoint.
@@ -347,6 +369,7 @@ class SIPEngine:
             codecs: List of codecs to enable
             log_level: PJSIP log level (0-6)
             transport: Transport protocol (UDP, TCP, TLS)
+            srtp_mode: SRTP mode (0=disabled, 1=optional, 2=mandatory)
         """
         if not PJSUA2_AVAILABLE:
             raise RuntimeError(
@@ -364,10 +387,12 @@ class SIPEngine:
         self.rtp_port_start = rtp_port_start
         self.rtp_port_end = rtp_port_end
         self.transport_type = transport.upper()
+        self.srtp_mode = srtp_mode
         if codecs:
             self.codecs = codecs
 
-        logger.info(f"Initializing SIP engine for {sip_server}:{sip_port} using {self.transport_type}")
+        srtp_mode_names = {0: "DISABLED", 1: "OPTIONAL", 2: "MANDATORY"}
+        logger.info(f"Initializing SIP engine for {sip_server}:{sip_port} using {self.transport_type}, SRTP={srtp_mode_names.get(srtp_mode, 'UNKNOWN')}")
 
         # Create endpoint
         self._endpoint = pj.Endpoint()
@@ -471,7 +496,8 @@ class SIPEngine:
         password: str,
         server: Optional[str] = None,
         port: Optional[int] = None,
-        transport: str = "UDP"
+        transport: str = "UDP",
+        srtp_mode: Optional[int] = None
     ):
         """
         Register as a PJSIP extension with the UCM.
@@ -482,18 +508,21 @@ class SIPEngine:
             server: SIP server (uses initialized server if not provided)
             port: SIP port (uses initialized port if not provided)
             transport: Transport protocol (UDP, TCP, TLS)
+            srtp_mode: SRTP mode (0=disabled, 1=optional, 2=mandatory)
         """
         if not self._initialized:
             raise RuntimeError("SIP engine not initialized")
 
         server = server or self.sip_server
         port = port or self.sip_port
+        # Use provided srtp_mode or fall back to engine's default
+        srtp = srtp_mode if srtp_mode is not None else self.srtp_mode
 
         logger.info(f"Registering as {username}@{server}:{port}")
 
         # Create account
         self._account = SIPAccount(self)
-        self._account.create(server, port, username, password, transport)
+        self._account.create(server, port, username, password, transport, srtp)
 
     def make_call(self, destination: str, caller_id: str = "") -> SIPCall:
         """

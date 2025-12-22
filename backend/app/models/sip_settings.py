@@ -24,6 +24,16 @@ class SIPTransport(str, enum.Enum):
         return name
 
 
+class SRTPMode(str, enum.Enum):
+    """SRTP (Secure RTP) mode for media encryption."""
+    DISABLED = "DISABLED"   # No SRTP
+    OPTIONAL = "OPTIONAL"   # Use SRTP if available, fallback to RTP
+    MANDATORY = "MANDATORY" # Require SRTP, fail if not available
+
+    def _generate_next_value_(name, start, count, last_values):
+        return name
+
+
 class ConnectionStatus(str, enum.Enum):
     """Connection status."""
     DISCONNECTED = "DISCONNECTED"
@@ -79,6 +89,11 @@ class SIPSettings(Base, UUIDMixin, TimestampMixin):
     # RTP/Media Settings
     rtp_port_start: Mapped[int] = mapped_column(Integer, default=10000)
     rtp_port_end: Mapped[int] = mapped_column(Integer, default=20000)
+
+    # SRTP (Secure RTP) for media encryption
+    srtp_mode: Mapped[SRTPMode] = mapped_column(
+        SQLEnum(SRTPMode, name='srtpmode'), default=SRTPMode.OPTIONAL
+    )
 
     # Codecs (ordered array of codec names)
     codecs: Mapped[list] = mapped_column(
