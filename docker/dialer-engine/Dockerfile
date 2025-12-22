@@ -58,19 +58,21 @@ RUN ./configure \
     CFLAGS="-O2 -fPIC" \
     && make dep \
     && make -j$(nproc) \
-    && make install
+    && make install \
+    && ldconfig
 
 # Build Python SWIG bindings
 WORKDIR /build/pjproject-2.14.1/pjsip-apps/src/swig/python
 
-# Build SWIG wrapper - use explicit Python path
+# Build SWIG wrapper
 RUN make clean || true \
-    && make _pjsua2.so \
+    && make \
     && python setup.py build_ext --inplace \
     && python setup.py install
 
-# Verify pjsua2 can be imported
-RUN python -c "import pjsua2; print('PJSUA2 build successful')"
+# Verify pjsua2 can be imported (set LD_LIBRARY_PATH for verification)
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+RUN ldconfig && python -c "import pjsua2; print('PJSUA2 build successful')"
 
 # =============================================================================
 # Runtime Stage
@@ -97,8 +99,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/ /usr/local/lib/
 COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
 
-# Update library cache
+# Update library cache and set library path
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 RUN ldconfig
+
+# Verify pjsua2 works in runtime stage
+RUN python -c "import pjsua2; print('PJSUA2 runtime OK')"
 
 # Install Python dependencies
 COPY requirements.txt .
