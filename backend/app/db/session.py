@@ -55,7 +55,14 @@ def get_async_url_and_connect_args():
 async_db_url, async_connect_args = get_async_url_and_connect_args()
 
 # Check if this is a DO managed database that needs app schema
-_is_do_db = "db.ondigitalocean.com" in async_db_url or "@db-" in async_db_url
+# Detection: DO domain patterns, port 25060, or production environment
+import os
+_is_do_db = (
+    "db.ondigitalocean.com" in async_db_url or
+    "@db-" in async_db_url or
+    ":25060/" in async_db_url or
+    os.environ.get("APP_ENV") == "production"
+)
 
 # For DO databases, add server_settings to set search_path
 if _is_do_db:
@@ -87,8 +94,16 @@ async_session_maker = async_sessionmaker(
 sync_db_url = settings.sync_database_url
 sync_connect_args = {}
 
+# Also check sync URL for DO detection
+_is_do_db_sync = (
+    "db.ondigitalocean.com" in sync_db_url or
+    "@db-" in sync_db_url or
+    ":25060/" in sync_db_url or
+    os.environ.get("APP_ENV") == "production"
+)
+
 # For DO databases, configure SSL and schema
-if _is_do_db:
+if _is_do_db_sync:
     # psycopg2 uses options parameter for search_path
     sync_connect_args["options"] = "-c search_path=app,public"
     # Add sslmode if not present in URL
