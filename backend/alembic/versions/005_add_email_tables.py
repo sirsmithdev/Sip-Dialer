@@ -111,7 +111,8 @@ def upgrade() -> None:
         sa.Column('retry_count', sa.Integer(), nullable=False, server_default='0'),
         sa.Column('sent_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('campaign_id', sa.String(36), sa.ForeignKey('campaigns.id'), nullable=True, index=True),
-        sa.Column('report_schedule_id', sa.String(36), sa.ForeignKey('report_schedules.id'), nullable=True),
+        # Note: report_schedule_id FK removed - report_schedules table created in later migration
+        sa.Column('report_schedule_id', sa.String(36), nullable=True),
         sa.Column('smtp_message_id', sa.String(255), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
