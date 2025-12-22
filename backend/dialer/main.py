@@ -377,7 +377,10 @@ class DialerEngine:
         self.sip_engine = SIPEngine()
 
         try:
-            # Initialize PJSIP library
+            # Get transport type from settings
+            transport_type = settings.sip_transport.value if hasattr(settings.sip_transport, 'value') else str(settings.sip_transport)
+
+            # Initialize PJSIP library with correct transport
             self.sip_engine.initialize(
                 sip_server=settings.sip_server,
                 sip_port=settings.sip_port,
@@ -385,14 +388,15 @@ class DialerEngine:
                 rtp_port_start=settings.rtp_port_start,
                 rtp_port_end=settings.rtp_port_end,
                 codecs=self._map_codecs(settings.codecs),
-                log_level=3 if os.getenv("DEBUG") else 2
+                log_level=3 if os.getenv("DEBUG") else 2,
+                transport=transport_type
             )
 
             # Register with UCM
             self.sip_engine.register(
                 username=settings.sip_username,
                 password=settings._decrypted_password,
-                transport=settings.sip_transport.value if hasattr(settings.sip_transport, 'value') else str(settings.sip_transport)
+                transport=transport_type
             )
 
             # Wait for registration

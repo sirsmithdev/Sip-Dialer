@@ -89,11 +89,29 @@ class SIPAccount:
         if not PJSUA2_AVAILABLE:
             raise RuntimeError("PJSUA2 not available")
 
+        transport = transport.upper()
+
         # Create account config
         acc_cfg = pj.AccountConfig()
-        acc_cfg.idUri = f"sip:{username}@{server}"
-        acc_cfg.regConfig.registrarUri = f"sip:{server}:{port}"
+
+        # Use proper SIP URI format based on transport
+        if transport == "TLS":
+            # For TLS, we can use sips: scheme or specify transport parameter
+            acc_cfg.idUri = f"sip:{username}@{server}"
+            acc_cfg.regConfig.registrarUri = f"sip:{server}:{port};transport=tls"
+        elif transport == "TCP":
+            acc_cfg.idUri = f"sip:{username}@{server}"
+            acc_cfg.regConfig.registrarUri = f"sip:{server}:{port};transport=tcp"
+        else:
+            # UDP (default)
+            acc_cfg.idUri = f"sip:{username}@{server}"
+            acc_cfg.regConfig.registrarUri = f"sip:{server}:{port}"
+
         acc_cfg.regConfig.timeoutSec = 3600
+        # Retry registration every 60 seconds on failure
+        acc_cfg.regConfig.retryIntervalSec = 60
+        # First retry after 5 seconds
+        acc_cfg.regConfig.firstRetryIntervalSec = 5
 
         # Add authentication credentials
         cred = pj.AuthCredInfo("digest", "*", username, 0, password)
@@ -104,7 +122,7 @@ class SIPAccount:
         self._pj_account.create(acc_cfg)
 
         self.state = RegistrationState.REGISTERING
-        logger.info(f"Created SIP account: {username}@{server}:{port}")
+        logger.info(f"Created SIP account: {username}@{server}:{port} via {transport}")
 
     def on_reg_state(self, info):
         """Callback when registration state changes."""
@@ -283,6 +301,7 @@ class SIPEngine:
         self._initialized = False
         self._pjsua_thread: Optional[threading.Thread] = None
         self._running = False
+        self.transport_type = "UDP"  # Default transport type
 
         # Configuration
         self.sip_server = ""
@@ -313,7 +332,8 @@ class SIPEngine:
         rtp_port_start: int = 10000,
         rtp_port_end: int = 20000,
         codecs: Optional[List[str]] = None,
-        log_level: int = 3
+        log_level: int = 3,
+        transport: str = "UDP"
     ):
         """
         Initialize the PJSIP library and endpoint.
@@ -326,6 +346,7 @@ class SIPEngine:
             rtp_port_end: End of RTP port range
             codecs: List of codecs to enable
             log_level: PJSIP log level (0-6)
+            transport: Transport protocol (UDP, TCP, TLS)
         """
         if not PJSUA2_AVAILABLE:
             raise RuntimeError(
@@ -342,10 +363,11 @@ class SIPEngine:
         self.local_port = local_port
         self.rtp_port_start = rtp_port_start
         self.rtp_port_end = rtp_port_end
+        self.transport_type = transport.upper()
         if codecs:
             self.codecs = codecs
 
-        logger.info(f"Initializing SIP engine for {sip_server}:{sip_port}")
+        logger.info(f"Initializing SIP engine for {sip_server}:{sip_port} using {self.transport_type}")
 
         # Create endpoint
         self._endpoint = pj.Endpoint()
@@ -378,10 +400,39 @@ class SIPEngine:
         except Exception as e:
             logger.warning(f"Could not set null audio device: {e}")
 
-        # Create UDP transport
+        # Create transport based on type
         tp_cfg = pj.TransportConfig()
         tp_cfg.port = local_port
-        self._transport = self._endpoint.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
+
+        if self.transport_type == "TLS":
+            # Configure TLS transport
+            try:
+                # TLS configuration
+                tp_cfg.tlsConfig.method = pj.PJSIP_TLSV1_2_METHOD
+                # For Grandstream UCM, we may need to accept self-signed certs
+                tp_cfg.tlsConfig.verifyServer = False
+                tp_cfg.tlsConfig.verifyClient = False
+
+                self._transport = self._endpoint.transportCreate(pj.PJSIP_TRANSPORT_TLS, tp_cfg)
+                logger.info(f"Created TLS transport on port {local_port}")
+            except Exception as e:
+                logger.error(f"Failed to create TLS transport: {e}")
+                logger.info("Falling back to UDP transport")
+                tp_cfg = pj.TransportConfig()
+                tp_cfg.port = local_port
+                self._transport = self._endpoint.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
+        elif self.transport_type == "TCP":
+            try:
+                self._transport = self._endpoint.transportCreate(pj.PJSIP_TRANSPORT_TCP, tp_cfg)
+                logger.info(f"Created TCP transport on port {local_port}")
+            except Exception as e:
+                logger.error(f"Failed to create TCP transport: {e}")
+                logger.info("Falling back to UDP transport")
+                self._transport = self._endpoint.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
+        else:
+            # Default to UDP
+            self._transport = self._endpoint.transportCreate(pj.PJSIP_TRANSPORT_UDP, tp_cfg)
+            logger.info(f"Created UDP transport on port {local_port}")
 
         # Start the library
         self._endpoint.libStart()
@@ -392,7 +443,7 @@ class SIPEngine:
         self._initialized = True
         self._running = True
 
-        logger.info("SIP engine initialized successfully")
+        logger.info(f"SIP engine initialized successfully with {self.transport_type} transport")
 
     def _configure_codecs(self):
         """Configure codec priorities."""
