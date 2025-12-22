@@ -1,8 +1,14 @@
 """
 Script to create an admin user.
 Run inside the container: python -m scripts.create_admin
+
+This script will:
+1. Run database migrations to ensure tables exist
+2. Create a default organization if needed
+3. Create an admin user if one doesn't exist
 """
 import asyncio
+import subprocess
 import sys
 import os
 
@@ -13,6 +19,29 @@ from sqlalchemy import select
 from app.db.session import async_session_maker
 from app.models.user import User, UserRole, Organization
 from app.core.security import get_password_hash
+
+
+def run_migrations():
+    """Run alembic migrations before creating the admin user."""
+    print("Running database migrations...")
+    try:
+        result = subprocess.run(
+            ["python", "-m", "alembic", "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        if result.returncode != 0:
+            print(f"Migration stderr: {result.stderr}")
+            # Don't fail - tables might already exist
+            print("Warning: Migrations may have failed, but continuing...")
+        else:
+            print("Migrations completed successfully.")
+            if result.stdout:
+                print(result.stdout)
+    except Exception as e:
+        print(f"Error running migrations: {e}")
+        print("Continuing anyway - tables may already exist...")
 
 
 async def create_admin_user():
@@ -90,4 +119,7 @@ async def create_admin_user():
 
 
 if __name__ == "__main__":
+    # Run migrations first to ensure tables exist
+    run_migrations()
+    # Then create the admin user
     asyncio.run(create_admin_user())
