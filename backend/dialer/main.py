@@ -139,6 +139,24 @@ class DialerEngine:
         # Map call_id to campaign_contact info for result tracking
         self._call_contacts: Dict[str, Dict[str, str]] = {}
 
+        # Redis URL
+        self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+    def _get_redis_client(self):
+        """Get Redis client with SSL support for DO Managed Redis."""
+        import redis.asyncio as redis
+
+        if self.redis_url.startswith("rediss://"):
+            # DO Managed Redis uses self-signed certs
+            return redis.from_url(
+                self.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                ssl_cert_reqs=None  # Disable cert verification for DO
+            )
+        else:
+            return redis.from_url(self.redis_url, encoding="utf-8", decode_responses=True)
+
     def _get_async_db_url_and_connect_args(self):
         """Get async database URL and connect_args with SSL support for DO."""
         from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -473,24 +491,11 @@ class DialerEngine:
         error: str = None
     ):
         """Publish SIP status to WebSocket clients via Redis."""
-        import redis.asyncio as redis
         import json
         from datetime import datetime
 
         try:
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-            # Handle DO Managed Redis (rediss:// with self-signed certs)
-            if redis_url.startswith("rediss://"):
-                r = redis.from_url(
-                    redis_url,
-                    encoding="utf-8",
-                    decode_responses=True,
-                    ssl_cert_reqs=None  # Disable cert verification for DO
-                )
-            else:
-                r = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
-
+            r = self._get_redis_client()
             active_calls = len(self.active_calls) if self.active_calls else 0
 
             message = json.dumps({
@@ -580,7 +585,8 @@ class DialerEngine:
 
     async def _process_active_campaigns(self):
         """Query and process all active campaigns."""
-        engine = create_async_engine(self.db_url)
+        db_url, connect_args = self._get_async_db_url_and_connect_args()
+        engine = create_async_engine(db_url, connect_args=connect_args)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         try:
@@ -847,7 +853,8 @@ class DialerEngine:
         call: "SIPCall"
     ):
         """Update the campaign contact with call result."""
-        engine = create_async_engine(self.db_url)
+        db_url, connect_args = self._get_async_db_url_and_connect_args()
+        engine = create_async_engine(db_url, connect_args=connect_args)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         try:
@@ -910,12 +917,10 @@ class DialerEngine:
 
     async def _publish_campaign_event(self, campaign_id: str, event_type: str):
         """Publish campaign event to Redis for WebSocket clients."""
-        import redis.asyncio as redis
         import json
 
         try:
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-            r = redis.from_url(redis_url)
+            r = self._get_redis_client()
 
             message = json.dumps({
                 "type": f"campaign.{event_type}",
@@ -936,12 +941,10 @@ class DialerEngine:
         if not self.call_manager:
             return
 
-        import redis.asyncio as redis
         import json
 
         try:
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-            r = redis.from_url(redis_url)
+            r = self._get_redis_client()
 
             status = self.call_manager.get_status()
             status["last_updated"] = datetime.utcnow().isoformat()
@@ -958,14 +961,12 @@ class DialerEngine:
 
     async def _listen_for_test_calls(self):
         """Listen for test call requests via Redis."""
-        import redis.asyncio as redis
         import json
 
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        logger.info(f"Listening for test calls on Redis: {redis_url}")
+        logger.info(f"Listening for test calls on Redis: {self.redis_url}")
 
         try:
-            r = redis.from_url(redis_url)
+            r = self._get_redis_client()
             pubsub = r.pubsub()
             await pubsub.subscribe("dialer:test_call")
 
