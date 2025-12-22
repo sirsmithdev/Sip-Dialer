@@ -144,10 +144,10 @@ async def run_async_migrations() -> None:
 
     use_app_schema = False
 
-    # For DO databases, first create the app schema, then set search_path
+    # For DO databases, use the app schema (DO pre-creates this schema)
     if is_do_db:
-        debug("DO database detected - creating app schema first")
-        # First connection: create the schema using direct asyncpg
+        debug("DO database detected - will use 'app' schema")
+        # Try to create the app schema (may already exist or may fail due to permissions)
         import asyncpg
 
         parsed = urlparse(db_url)
@@ -167,18 +167,21 @@ async def run_async_migrations() -> None:
             try:
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
                 debug("Created 'app' schema successfully")
-                use_app_schema = True
+            except Exception as schema_err:
+                # Schema might already exist or we don't have permission - that's OK
+                # DO App Platform pre-creates the 'app' schema for dev databases
+                debug(f"Note: Could not create app schema (may already exist): {schema_err}")
             finally:
                 await conn.close()
         except Exception as e:
-            debug(f"ERROR: Could not create app schema: {type(e).__name__}: {e}")
+            debug(f"ERROR: Could not connect to create app schema: {type(e).__name__}: {e}")
             import traceback
             debug(f"Traceback: {traceback.format_exc()}")
 
-        if use_app_schema:
-            # Set server_settings to use the app schema for all subsequent queries
-            connect_args["server_settings"] = {"search_path": "app,public"}
-            debug("Setting search_path to app,public via server_settings")
+        # Always use app schema for DO databases (it's pre-created by DO)
+        use_app_schema = True
+        connect_args["server_settings"] = {"search_path": "app,public"}
+        debug("Setting search_path to app,public via server_settings")
     else:
         debug("Not a DO database, using public schema")
 
