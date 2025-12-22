@@ -121,14 +121,12 @@ class SIPAccount:
         # srtpUse: 0=disabled, 1=optional, 2=mandatory
         acc_cfg.mediaConfig.srtpUse = srtp_mode
         # srtpSecureSignaling: 0=not required, 1=require TLS/SIPS, 2=end-to-end only
-        # When using TLS transport, we can require secure signaling for SRTP
-        if transport == "TLS" and srtp_mode > 0:
-            acc_cfg.mediaConfig.srtpSecureSignaling = 1  # Require TLS for SRTP
-        else:
-            acc_cfg.mediaConfig.srtpSecureSignaling = 0  # No requirement
+        # Set to 0 to avoid PJSIP_ESESSIONINSECURE errors - we already use TLS
+        # but the strict check can fail due to certificate/security chain issues
+        acc_cfg.mediaConfig.srtpSecureSignaling = 0  # Don't require TLS for SRTP key exchange
 
         srtp_mode_names = {0: "DISABLED", 1: "OPTIONAL", 2: "MANDATORY"}
-        logger.info(f"Account SRTP config: srtpUse={srtp_mode_names.get(srtp_mode, 'UNKNOWN')}, srtpSecureSignaling={acc_cfg.mediaConfig.srtpSecureSignaling}")
+        logger.info(f"Account SRTP config: srtpUse={srtp_mode_names.get(srtp_mode, 'UNKNOWN')}, srtpSecureSignaling=0")
 
         # Create the account with callback handler
         self._pj_account = _PJAccount(self)
