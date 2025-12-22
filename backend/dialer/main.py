@@ -7,7 +7,7 @@ by connecting directly as a PJSIP extension to the UCM6302/PBX.
 The dialer acts like a SIP softphone - it registers with the PBX,
 then originates calls using SIP INVITE with full RTP media support.
 
-Version: 2.0.2 - Fix deprecated Redis close() -> aclose() (2025-12-22)
+Version: 2.0.3 - Add task references to prevent GC during shutdown (2025-12-22)
 """
 import asyncio
 import logging
@@ -143,6 +143,24 @@ class DialerEngine:
 
         # Redis URL
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+        # Background task references (prevents garbage collection)
+        self._test_call_listener_task: Optional[asyncio.Task] = None
+        self._call_monitor_task: Optional[asyncio.Task] = None
+
+    def _task_done_callback(self, task: asyncio.Task):
+        """Callback for when a background task completes or fails."""
+        task_name = task.get_name() if hasattr(task, 'get_name') else str(task)
+        try:
+            # Check if task raised an exception
+            exc = task.exception()
+            if exc:
+                logger.error(f"Background task {task_name} failed with exception: {exc}")
+        except asyncio.CancelledError:
+            logger.info(f"Background task {task_name} was cancelled (normal during shutdown)")
+        except asyncio.InvalidStateError:
+            # Task is still running or hasn't started
+            logger.debug(f"Background task {task_name} state check: still pending")
 
     def _get_redis_client(self):
         """Get Redis client with SSL support for DO Managed Redis."""
@@ -556,11 +574,13 @@ class DialerEngine:
         else:
             logger.warning("Call manager not available, concurrent call management disabled")
 
-        # Start Redis listener for test calls
-        asyncio.create_task(self._listen_for_test_calls())
+        # Start Redis listener for test calls (keep reference to prevent GC)
+        self._test_call_listener_task = asyncio.create_task(self._listen_for_test_calls())
+        self._test_call_listener_task.add_done_callback(self._task_done_callback)
 
-        # Start call monitor task
-        asyncio.create_task(self._monitor_active_calls())
+        # Start call monitor task (keep reference to prevent GC)
+        self._call_monitor_task = asyncio.create_task(self._monitor_active_calls())
+        self._call_monitor_task.add_done_callback(self._task_done_callback)
 
         status_publish_counter = 0
         while self.running:
