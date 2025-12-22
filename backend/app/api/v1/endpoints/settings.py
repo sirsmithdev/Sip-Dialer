@@ -166,12 +166,11 @@ async def get_dialer_status(
     - Active calls count
     - Call manager status (concurrent calls per campaign)
     """
-    import redis.asyncio as redis_async
     import json
-    from app.config import settings as app_settings
+    from app.db.redis import get_redis
 
     try:
-        r = redis_async.from_url(app_settings.redis_url)
+        r = await get_redis()
 
         # Get SIP status
         sip_status_data = await r.get("dialer:sip_status")
@@ -181,7 +180,7 @@ async def get_dialer_status(
         call_manager_data = await r.get("dialer:call_manager_status")
         call_manager_status = json.loads(call_manager_data) if call_manager_data else None
 
-        await r.aclose()
+        # Note: Don't close the shared Redis client here
 
         return {
             "sip": sip_status or {
