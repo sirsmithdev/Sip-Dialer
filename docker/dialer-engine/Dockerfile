@@ -1,5 +1,6 @@
 # =============================================================================
 # Dialer Engine Dockerfile with PJSIP/PJSUA2 Support
+# Cache buster: 20251222_v5_call_uri_transport
 # =============================================================================
 # This container runs the SIP auto-dialer engine that registers with
 # Grandstream UCM as a PJSIP extension and handles outbound calling.

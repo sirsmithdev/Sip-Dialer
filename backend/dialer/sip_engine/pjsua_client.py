@@ -208,9 +208,20 @@ class SIPCall:
         self.info.caller_id = caller_id
         self.info.state = CallState.CALLING
 
-        # Build destination URI
+        # Build destination URI with transport parameter matching registration
         server = self.account.engine.sip_server
-        dest_uri = f"sip:{destination}@{server}"
+        port = self.account.engine.sip_port
+        transport = self.account.engine.transport_type
+
+        # Include transport in call URI to match registration transport
+        if transport == "TLS":
+            dest_uri = f"sip:{destination}@{server}:{port};transport=tls"
+        elif transport == "TCP":
+            dest_uri = f"sip:{destination}@{server}:{port};transport=tcp"
+        else:
+            dest_uri = f"sip:{destination}@{server}:{port}"
+
+        logger.info(f"Call destination URI: {dest_uri}")
 
         # Create call with callback handler
         self._pj_call = _PJCall(self, self.account._pj_account)
