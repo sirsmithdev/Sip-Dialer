@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Cache buster - change this value to force rebuild
+ARG CACHE_BUST=20251222_v1
+
 WORKDIR /app
 
 # Install system dependencies
