@@ -63,9 +63,14 @@ RUN ./configure \
 # Build Python SWIG bindings
 WORKDIR /build/pjproject-2.14.1/pjsip-apps/src/swig/python
 
-RUN make \
-    && python setup.py build \
+# Build SWIG wrapper - use explicit Python path
+RUN make clean || true \
+    && make _pjsua2.so \
+    && python setup.py build_ext --inplace \
     && python setup.py install
+
+# Verify pjsua2 can be imported
+RUN python -c "import pjsua2; print('PJSUA2 build successful')"
 
 # =============================================================================
 # Runtime Stage
@@ -87,10 +92,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy PJSIP libraries from builder (including all .so files)
-COPY --from=builder /usr/local/lib/*.so* /usr/local/lib/
-COPY --from=builder /usr/local/lib/python3.11/site-packages/pjsua2* /usr/local/lib/python3.11/site-packages/
-COPY --from=builder /usr/local/lib/python3.11/site-packages/_pjsua2* /usr/local/lib/python3.11/site-packages/
+# Copy PJSIP libraries from builder
+# Note: Using shell to handle wildcards properly
+COPY --from=builder /usr/local/lib/ /usr/local/lib/
+COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
 
 # Update library cache
 RUN ldconfig
