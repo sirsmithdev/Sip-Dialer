@@ -3,7 +3,7 @@ Database session management.
 """
 import ssl
 from contextlib import contextmanager
-from typing import AsyncGenerator, Generator, Optional, Tuple
+from typing import AsyncGenerator, Generator
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine
@@ -13,45 +13,26 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import settings
 
 
-def get_async_url_and_connect_args() -> Tuple[str, dict, bool, Optional[str]]:
+def get_async_url_and_connect_args():
     """
     Get the async database URL and connect_args for asyncpg.
 
     asyncpg doesn't accept sslmode parameter - it needs ssl=True or an SSL context.
     We strip sslmode from the URL and return SSL settings separately.
-
-    For DigitalOcean App Platform dev databases:
-    - The public schema is NOT writable
-    - There's a default schema matching the database name that IS writable
-    - The database name is extracted from the URL path (e.g., /db -> schema 'db')
-
-    Returns:
-        Tuple of (url, connect_args, is_do_db, target_schema)
     """
     db_url = settings.async_database_url
     connect_args = {}
-    target_schema: Optional[str] = None
 
     # Parse URL to get components
     parsed = urlparse(db_url)
 
-    # Check if this is a DO App Platform dev database
-    # These use port 25060 and have restricted schema access
-    is_do_dev_db = ":25060/" in db_url
-
     # Check if this is a DO managed database (requires SSL)
     is_do_db = (
         "db.ondigitalocean.com" in db_url or
-        is_do_dev_db
+        ":25060/" in db_url
     )
 
     use_ssl = is_do_db
-
-    # For DO App Platform dev databases, use the database name as the schema
-    if is_do_dev_db:
-        db_name = parsed.path.lstrip('/')  # Remove leading slash
-        if db_name:
-            target_schema = db_name
 
     # Handle query parameters
     if parsed.query:
@@ -74,15 +55,11 @@ def get_async_url_and_connect_args() -> Tuple[str, dict, bool, Optional[str]]:
         ssl_context.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ssl_context
 
-    return db_url, connect_args, is_do_db, target_schema
+    return db_url, connect_args, is_do_db
 
 
 # Get clean URL and connect_args for async engine
-async_db_url, async_connect_args, _is_do_db, _do_schema = get_async_url_and_connect_args()
-
-# For DO dev databases, set search_path to use the correct schema
-if _is_do_db and _do_schema:
-    async_connect_args["server_settings"] = {"search_path": f"{_do_schema}, public"}
+async_db_url, async_connect_args, _is_do_db = get_async_url_and_connect_args()
 
 # Create async engine
 engine = create_async_engine(
