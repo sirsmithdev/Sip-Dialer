@@ -55,18 +55,12 @@ def get_async_url_and_connect_args():
 async_db_url, async_connect_args = get_async_url_and_connect_args()
 
 # Check if this is a DO managed database that needs app schema
-# Detection: DO domain patterns, port 25060, production environment, or DO database name patterns
-import os
-
-# DO App Platform dev databases use patterns like:
-# postgresql://db:password@private-xxx.db.ondigitalocean.com:25060/db
-# The domain contains .db.ondigitalocean.com or private-* patterns
+# Detection: DO domain patterns, port 25060, or private-* hostnames
 _is_do_db = (
     "db.ondigitalocean.com" in async_db_url or
     "@db-" in async_db_url or
     ":25060/" in async_db_url or
-    "private-" in async_db_url or
-    os.environ.get("APP_ENV") == "production"
+    "private-" in async_db_url
 )
 
 # For DO databases, add server_settings to set search_path
@@ -104,8 +98,7 @@ _is_do_db_sync = (
     "db.ondigitalocean.com" in sync_db_url or
     "@db-" in sync_db_url or
     ":25060/" in sync_db_url or
-    "private-" in sync_db_url or
-    os.environ.get("APP_ENV") == "production"
+    "private-" in sync_db_url
 )
 
 # For DO databases, configure SSL and schema
