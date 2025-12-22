@@ -6,6 +6,8 @@ by connecting directly as a PJSIP extension to the UCM6302/PBX.
 
 The dialer acts like a SIP softphone - it registers with the PBX,
 then originates calls using SIP INVITE with full RTP media support.
+
+Version: 2.0.1 - Redis listener retry loop fix (2025-12-22)
 """
 import asyncio
 import logging
