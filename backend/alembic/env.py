@@ -184,10 +184,11 @@ async def run_async_migrations() -> None:
                 # 1. Schema matching database name (DO convention for dev DBs)
                 # 2. Schema matching username
                 # 3. 'app' schema
-                # 4. Try to create 'app' schema
-                # 5. Fall back to public
+                # 4. 'db' schema (DO App Platform dev database default)
+                # 5. Try to create 'app' schema
+                # 6. Fall back to public
 
-                for candidate in [db_name, username, 'app']:
+                for candidate in [db_name, username, 'app', 'db']:
                     if candidate in schema_list:
                         debug(f"Found candidate schema: '{candidate}'")
                         # Test if we can write to this schema

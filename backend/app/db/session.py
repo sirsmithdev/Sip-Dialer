@@ -59,8 +59,9 @@ _is_do_db = "db.ondigitalocean.com" in async_db_url or "@db-" in async_db_url
 
 # For DO databases, add server_settings to set search_path
 if _is_do_db:
-    # Set search_path to look in app schema first, then public
-    async_connect_args["server_settings"] = {"search_path": "app, public"}
+    # Set search_path to look in db schema first (DO dev database default),
+    # then app schema, then public
+    async_connect_args["server_settings"] = {"search_path": "db, app, public"}
 
 # Create async engine
 engine = create_async_engine(
@@ -90,7 +91,8 @@ sync_connect_args = {}
 # For DO databases, configure SSL and schema
 if _is_do_db:
     # psycopg2 uses options parameter for search_path
-    sync_connect_args["options"] = "-c search_path=app,public"
+    # Include db schema for DO dev databases
+    sync_connect_args["options"] = "-c search_path=db,app,public"
     # Add sslmode if not present in URL
     if "sslmode" not in sync_db_url:
         if "?" in sync_db_url:
