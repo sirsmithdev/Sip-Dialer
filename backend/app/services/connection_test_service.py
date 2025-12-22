@@ -4,6 +4,7 @@ Connection Test Service for SIP/PJSIP.
 import json
 import logging
 import socket
+import ssl
 import time
 from typing import Optional
 
@@ -27,6 +28,8 @@ ERROR_HINTS = {
     "401 Unauthorized": "Invalid credentials. Verify PJSIP extension username and password on UCM6302.",
     "403 Forbidden": "Access denied. Extension may be disabled or restricted on UCM6302.",
     "404 Not Found": "Extension not found. Verify the PJSIP extension exists on UCM6302.",
+    "TLS handshake": "TLS connection failed. Check if UCM supports TLS 1.2 and has valid certificates.",
+    "SSL": "SSL/TLS error. Try using TCP transport instead, or verify UCM TLS configuration.",
 }
 
 
@@ -73,18 +76,19 @@ class ConnectionTestService:
         Steps:
         1. Resolve DNS to IP
         2. Create proper SIP OPTIONS request
-        3. Send via UDP
+        3. Send via UDP or TCP (based on settings)
         4. Wait for response (5 second timeout)
         5. Parse response
         """
         sip_server = settings.sip_server
         sip_port = settings.sip_port
         sip_username = settings.sip_username
+        sip_transport = settings.sip_transport.value if hasattr(settings.sip_transport, 'value') else str(settings.sip_transport)
 
         test_steps = []
         start_time = time.time()
 
-        self.logger.info(f"Starting SIP test to {sip_server}:{sip_port}")
+        self.logger.info(f"Starting SIP test to {sip_server}:{sip_port} via {sip_transport}")
 
         try:
             # Step 1: Resolve DNS
@@ -100,12 +104,12 @@ class ConnectionTestService:
             local_port = 5061  # Use a different port for the test
             sip_request = (
                 f"OPTIONS sip:{sip_server}:{sip_port} SIP/2.0\r\n"
-                f"Via: SIP/2.0/UDP {resolved_ip}:{local_port};branch=z9hG4bK-test-{call_id}\r\n"
+                f"Via: SIP/2.0/{sip_transport} {resolved_ip}:{local_port};branch=z9hG4bK-test-{call_id}\r\n"
                 f"From: <sip:{sip_username}@{sip_server}>;tag=test-{call_id}\r\n"
                 f"To: <sip:{sip_server}:{sip_port}>\r\n"
                 f"Call-ID: {call_id}@autodialer\r\n"
                 f"CSeq: 1 OPTIONS\r\n"
-                f"Contact: <sip:{sip_username}@{resolved_ip}:{local_port}>\r\n"
+                f"Contact: <sip:{sip_username}@{resolved_ip}:{local_port};transport={sip_transport.lower()}>\r\n"
                 f"Max-Forwards: 70\r\n"
                 f"User-Agent: SIP-Autodialer/1.0\r\n"
                 f"Accept: application/sdp\r\n"
@@ -113,18 +117,49 @@ class ConnectionTestService:
                 f"\r\n"
             )
 
-            # Step 3 & 4: Send and wait for response
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(5.0)
+            # Step 3 & 4: Send and wait for response (use TCP, TLS, or UDP based on transport)
+            if sip_transport.upper() in ("TCP", "TLS"):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5.0)
 
-            try:
+                # Wrap with TLS if needed
+                if sip_transport.upper() == "TLS":
+                    # Create TLS context with TLS 1.2 minimum
+                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE  # UCM may use self-signed certs
+                    sock = ssl_context.wrap_socket(sock, server_hostname=sip_server)
+                    test_steps.append(f"✓ Using TLS 1.2+ encryption")
+
+                try:
+                    sock.connect((resolved_ip, sip_port))
+                    protocol_name = "TLS" if sip_transport.upper() == "TLS" else "TCP"
+                    test_steps.append(f"✓ {protocol_name} connection established to {resolved_ip}:{sip_port}")
+                    sock.sendall(sip_request.encode())
+                    test_steps.append(f"✓ Sent SIP OPTIONS via {protocol_name}")
+                    # Wait for response
+                    data = sock.recv(4096)
+                    response = data.decode('utf-8', errors='ignore')
+                    test_steps.append(f"✓ Received response from {resolved_ip}:{sip_port}")
+                except socket.timeout:
+                    sock.close()
+                    raise socket.timeout(f"{sip_transport} connection timeout")
+                except ConnectionRefusedError:
+                    sock.close()
+                    raise ConnectionRefusedError(f"{sip_transport} connection refused to {resolved_ip}:{sip_port}")
+                except ssl.SSLError as e:
+                    sock.close()
+                    raise ssl.SSLError(f"TLS handshake failed: {e}")
+            else:
+                # UDP (default)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(5.0)
                 sock.sendto(sip_request.encode(), (resolved_ip, sip_port))
                 test_steps.append(f"✓ Sent SIP OPTIONS to {resolved_ip}:{sip_port}")
-
                 # Wait for response
                 data, addr = sock.recvfrom(4096)
                 response = data.decode('utf-8', errors='ignore')
-
                 test_steps.append(f"✓ Received response from {addr[0]}:{addr[1]}")
 
                 # Step 5: Parse response
