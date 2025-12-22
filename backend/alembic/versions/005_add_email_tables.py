@@ -22,38 +22,35 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create EmailType ENUM using raw SQL with IF NOT EXISTS for safety
-    op.execute("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'emailtype') THEN
-                CREATE TYPE emailtype AS ENUM (
-                    'campaign_report',
-                    'daily_summary',
-                    'weekly_summary',
-                    'campaign_completed',
-                    'system_alert',
-                    'test'
-                );
-            END IF;
-        END$$;
-    """)
+    # Get database connection to check if types exist
+    connection = op.get_bind()
 
-    # Create EmailStatus ENUM using raw SQL with IF NOT EXISTS for safety
-    op.execute("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'emailstatus') THEN
-                CREATE TYPE emailstatus AS ENUM (
-                    'pending',
-                    'sending',
-                    'sent',
-                    'failed',
-                    'bounced'
-                );
-            END IF;
-        END$$;
-    """)
+    # Check and create EmailType ENUM
+    result = connection.execute(sa.text("SELECT 1 FROM pg_type WHERE typname = 'emailtype'"))
+    if not result.fetchone():
+        op.execute("""
+            CREATE TYPE emailtype AS ENUM (
+                'campaign_report',
+                'daily_summary',
+                'weekly_summary',
+                'campaign_completed',
+                'system_alert',
+                'test'
+            )
+        """)
+
+    # Check and create EmailStatus ENUM
+    result = connection.execute(sa.text("SELECT 1 FROM pg_type WHERE typname = 'emailstatus'"))
+    if not result.fetchone():
+        op.execute("""
+            CREATE TYPE emailstatus AS ENUM (
+                'pending',
+                'sending',
+                'sent',
+                'failed',
+                'bounced'
+            )
+        """)
 
     # Define enum types for table columns (create_type=False since we created them above)
     email_type_enum = postgresql.ENUM(
