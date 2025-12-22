@@ -2,16 +2,37 @@
 Celery application configuration.
 """
 import os
+import ssl
 from celery import Celery
 from celery.schedules import crontab
 
 # Get Redis URL from environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
+
+# SSL configuration for DigitalOcean Managed Redis (rediss:// URLs)
+broker_use_ssl = None
+redis_backend_use_ssl = None
+
+if CELERY_BROKER_URL.startswith("rediss://"):
+    # DigitalOcean Managed Redis requires SSL with cert verification disabled
+    broker_use_ssl = {
+        'ssl_cert_reqs': ssl.CERT_NONE,
+        'ssl_check_hostname': False,
+    }
+    redis_backend_use_ssl = broker_use_ssl
+
+# Also check REDIS_URL for backend SSL
+if REDIS_URL.startswith("rediss://"):
+    redis_backend_use_ssl = {
+        'ssl_cert_reqs': ssl.CERT_NONE,
+        'ssl_check_hostname': False,
+    }
 
 # Create Celery app
 app = Celery(
     "autodialer",
-    broker=REDIS_URL,
+    broker=CELERY_BROKER_URL,
     backend=REDIS_URL,
     include=[
         "workers.tasks.campaign_tasks",
@@ -32,6 +53,9 @@ app.conf.update(
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    # SSL for broker and backend
+    broker_use_ssl=broker_use_ssl,
+    redis_backend_use_ssl=redis_backend_use_ssl,
     # Beat schedule for periodic tasks
     beat_schedule={
         "check-scheduled-campaigns": {
