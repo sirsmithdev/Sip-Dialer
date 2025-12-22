@@ -18,7 +18,7 @@ from typing import Optional, Dict, Any, List
 import ssl
 from urllib.parse import urlparse
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, text, cast, String
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, selectinload
 from minio import Minio
@@ -596,9 +596,11 @@ class DialerEngine:
         try:
             async with async_session() as session:
                 # Get all running campaigns
+                # Use text() cast to avoid asyncpg enum type issues when enum doesn't exist
+                # This works whether the column is VARCHAR or ENUM
                 result = await session.execute(
                     select(Campaign)
-                    .where(Campaign.status == CampaignStatus.RUNNING)
+                    .where(cast(Campaign.status, String) == 'running')
                     .options(selectinload(Campaign.ivr_flow))
                 )
                 campaigns = result.scalars().all()
@@ -608,6 +610,8 @@ class DialerEngine:
 
         except Exception as e:
             logger.error(f"Error querying campaigns: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             await engine.dispose()
 
@@ -656,12 +660,12 @@ class DialerEngine:
                 ivr_flow_definition = active_version.definition
 
         # Queue contacts for dialing
+        from sqlalchemy import update
         pending_contacts = []
+        cc_ids_to_update = []
+
         for cc, contact in contacts_to_dial:
-            # Mark contact as in-progress
-            cc.status = ContactStatus.IN_PROGRESS
-            cc.attempts += 1
-            cc.last_attempt_at = datetime.utcnow()
+            cc_ids_to_update.append(cc.id)
 
             pending_contact = PendingContact(
                 campaign_id=campaign.id,
@@ -671,11 +675,22 @@ class DialerEngine:
                 caller_id="",  # Use default caller ID from SIP settings
                 ivr_flow_definition=ivr_flow_definition,
                 priority=cc.priority,
-                attempts=cc.attempts
+                attempts=cc.attempts + 1
             )
             pending_contacts.append(pending_contact)
 
-        await session.commit()
+        # Mark contacts as in-progress using raw update to avoid enum type issues
+        if cc_ids_to_update:
+            await session.execute(
+                update(CampaignContact)
+                .where(CampaignContact.id.in_(cc_ids_to_update))
+                .values(
+                    status='in_progress',
+                    attempts=CampaignContact.attempts + 1,
+                    last_attempt_at=datetime.utcnow()
+                )
+            )
+            await session.commit()
 
         # Add to call manager queue
         if pending_contacts:
@@ -712,6 +727,8 @@ class DialerEngine:
         # 1. PENDING status, OR
         # 2. FAILED/IN_PROGRESS with retry scheduled (next_attempt_at <= now)
         # AND haven't exceeded max retries
+        # Use cast(String) to avoid asyncpg enum type issues
+        status_col = cast(CampaignContact.status, String)
         query = (
             select(CampaignContact, Contact)
             .join(Contact, CampaignContact.contact_id == Contact.id)
@@ -719,9 +736,9 @@ class DialerEngine:
                 and_(
                     CampaignContact.campaign_id == campaign.id,
                     or_(
-                        CampaignContact.status == ContactStatus.PENDING,
+                        status_col == 'pending',
                         and_(
-                            CampaignContact.status.in_([ContactStatus.FAILED, ContactStatus.IN_PROGRESS]),
+                            status_col.in_(['failed', 'in_progress']),
                             CampaignContact.next_attempt_at <= now,
                             CampaignContact.attempts < campaign.max_retries + 1
                         )
@@ -740,24 +757,28 @@ class DialerEngine:
         from sqlalchemy import func
 
         # Count remaining contacts to process
+        # Use cast(String) to avoid asyncpg enum type issues
+        status_col = cast(CampaignContact.status, String)
         remaining = await session.execute(
             select(func.count())
             .where(
                 and_(
                     CampaignContact.campaign_id == campaign.id,
-                    CampaignContact.status.in_([
-                        ContactStatus.PENDING,
-                        ContactStatus.IN_PROGRESS
-                    ])
+                    status_col.in_(['pending', 'in_progress'])
                 )
             )
         )
         remaining_count = remaining.scalar() or 0
 
         if remaining_count == 0:
-            # Mark campaign as completed
-            campaign.status = CampaignStatus.COMPLETED
-            campaign.completed_at = datetime.utcnow()
+            # Mark campaign as completed using string value
+            # We set the raw value since the column may be VARCHAR or ENUM
+            from sqlalchemy import update
+            await session.execute(
+                update(Campaign)
+                .where(Campaign.id == campaign.id)
+                .values(status='completed', completed_at=datetime.utcnow())
+            )
             await session.commit()
 
             # Unregister from call manager
@@ -857,12 +878,15 @@ class DialerEngine:
         call: "SIPCall"
     ):
         """Update the campaign contact with call result."""
+        from sqlalchemy import update
+
         db_url, connect_args = self._get_async_db_url_and_connect_args()
         engine = create_async_engine(db_url, connect_args=connect_args)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         try:
             async with async_session() as session:
+                # Get campaign contact and campaign info
                 result = await session.execute(
                     select(CampaignContact)
                     .options(selectinload(CampaignContact.campaign))
@@ -874,48 +898,88 @@ class DialerEngine:
                     return
 
                 campaign = cc.campaign
+                campaign_id = campaign.id
 
-                # Determine disposition based on state
-                # TODO: Add AMD detection result here
+                # Determine disposition and new status based on call state
+                # Use string values to avoid enum type issues
                 if state == CallState.DISCONNECTED:
                     # Call was answered and completed
-                    disposition = CallDisposition.ANSWERED_HUMAN
-                    cc.status = ContactStatus.COMPLETED
-                    campaign.contacts_answered += 1
-                    campaign.contacts_completed += 1
+                    disposition = 'answered_human'
+                    new_status = 'completed'
+
+                    # Update campaign stats
+                    await session.execute(
+                        update(Campaign)
+                        .where(Campaign.id == campaign_id)
+                        .values(
+                            contacts_answered=Campaign.contacts_answered + 1,
+                            contacts_completed=Campaign.contacts_completed + 1,
+                            contacts_called=Campaign.contacts_called + 1
+                        )
+                    )
+
                 elif state == CallState.FAILED:
                     # Call failed - determine reason
-                    # This could be NO_ANSWER, BUSY, etc based on SIP response
-                    disposition = CallDisposition.NO_ANSWER
-                    cc.last_disposition = disposition
+                    disposition = 'no_answer'
 
                     # Check if we should retry
                     if cc.attempts < campaign.max_retries + 1:
-                        # Schedule retry
-                        if (disposition == CallDisposition.NO_ANSWER and campaign.retry_on_no_answer) or \
-                           (disposition == CallDisposition.BUSY and campaign.retry_on_busy) or \
-                           campaign.retry_on_failed:
-                            cc.status = ContactStatus.PENDING
-                            cc.next_attempt_at = datetime.utcnow() + timedelta(
+                        # Schedule retry based on settings
+                        should_retry = campaign.retry_on_no_answer or campaign.retry_on_failed
+                        if should_retry:
+                            new_status = 'pending'
+                            next_attempt = datetime.utcnow() + timedelta(
                                 minutes=campaign.retry_delay_minutes
                             )
                         else:
-                            cc.status = ContactStatus.FAILED
-                            campaign.contacts_completed += 1
+                            new_status = 'failed'
+                            next_attempt = None
                     else:
-                        cc.status = ContactStatus.FAILED
-                        campaign.contacts_completed += 1
-                else:
-                    disposition = CallDisposition.FAILED
-                    cc.status = ContactStatus.FAILED
+                        new_status = 'failed'
+                        next_attempt = None
 
-                cc.last_disposition = disposition
-                campaign.contacts_called += 1
+                    # Update campaign stats
+                    stats_update = {"contacts_called": Campaign.contacts_called + 1}
+                    if new_status == 'failed':
+                        stats_update["contacts_completed"] = Campaign.contacts_completed + 1
+
+                    await session.execute(
+                        update(Campaign)
+                        .where(Campaign.id == campaign_id)
+                        .values(**stats_update)
+                    )
+
+                    # Update campaign contact with next_attempt if retrying
+                    if new_status == 'pending' and next_attempt:
+                        await session.execute(
+                            update(CampaignContact)
+                            .where(CampaignContact.id == campaign_contact_id)
+                            .values(next_attempt_at=next_attempt)
+                        )
+
+                else:
+                    disposition = 'failed'
+                    new_status = 'failed'
+
+                    await session.execute(
+                        update(Campaign)
+                        .where(Campaign.id == campaign_id)
+                        .values(contacts_called=Campaign.contacts_called + 1)
+                    )
+
+                # Update campaign contact status and disposition
+                await session.execute(
+                    update(CampaignContact)
+                    .where(CampaignContact.id == campaign_contact_id)
+                    .values(status=new_status, last_disposition=disposition)
+                )
 
                 await session.commit()
 
         except Exception as e:
             logger.error(f"Error updating call result: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             await engine.dispose()
 
