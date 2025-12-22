@@ -144,16 +144,15 @@ async def run_async_migrations() -> None:
 
     use_app_schema = False
 
-    # For DO databases, use the app schema (DO pre-creates this schema)
+    # For DO databases, try to use the app schema if it exists
     if is_do_db:
-        debug("DO database detected - will use 'app' schema")
-        # Try to create the app schema (may already exist or may fail due to permissions)
+        debug("DO database detected - checking for 'app' schema")
         import asyncpg
 
         parsed = urlparse(db_url)
         debug(f"Connecting to: {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}")
         try:
-            # Connect directly with asyncpg to create schema
+            # Connect directly with asyncpg to check/create schema
             ssl_arg = connect_args.get("ssl", False) if use_ssl else False
             debug(f"Using SSL: {bool(ssl_arg)}")
             conn = await asyncpg.connect(
@@ -165,23 +164,38 @@ async def run_async_migrations() -> None:
                 ssl=ssl_arg
             )
             try:
-                await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
-                debug("Created 'app' schema successfully")
-            except Exception as schema_err:
-                # Schema might already exist or we don't have permission - that's OK
-                # DO App Platform pre-creates the 'app' schema for dev databases
-                debug(f"Note: Could not create app schema (may already exist): {schema_err}")
+                # First, check if app schema already exists
+                result = await conn.fetchval(
+                    "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'app'"
+                )
+                if result:
+                    debug("'app' schema already exists")
+                    use_app_schema = True
+                else:
+                    # Try to create the app schema
+                    try:
+                        await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
+                        debug("Created 'app' schema successfully")
+                        use_app_schema = True
+                    except Exception as schema_err:
+                        # Permission denied - fall back to public schema
+                        debug(f"Cannot create app schema: {schema_err}")
+                        debug("Falling back to public schema")
+                        use_app_schema = False
             finally:
                 await conn.close()
         except Exception as e:
-            debug(f"ERROR: Could not connect to create app schema: {type(e).__name__}: {e}")
+            debug(f"ERROR: Could not connect to check/create app schema: {type(e).__name__}: {e}")
             import traceback
             debug(f"Traceback: {traceback.format_exc()}")
+            # If we can't connect, fall back to public schema
+            use_app_schema = False
 
-        # Always use app schema for DO databases (it's pre-created by DO)
-        use_app_schema = True
-        connect_args["server_settings"] = {"search_path": "app,public"}
-        debug("Setting search_path to app,public via server_settings")
+        if use_app_schema:
+            connect_args["server_settings"] = {"search_path": "app,public"}
+            debug("Using 'app' schema - setting search_path to app,public")
+        else:
+            debug("Using 'public' schema (default)")
     else:
         debug("Not a DO database, using public schema")
 
