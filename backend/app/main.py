@@ -76,3 +76,84 @@ async def root():
         "docs": "/api/docs",
         "health": "/api/v1/health",
     }
+
+
+@app.post("/api/v1/setup/init-admin")
+async def init_admin():
+    """
+    Initialize admin user if not exists.
+    This endpoint can only create the admin if no users exist yet.
+    """
+    from sqlalchemy import select, text
+    from app.db.session import async_session_maker
+    from app.models.user import User, Organization
+    from app.core.security import get_password_hash
+    import uuid
+
+    async with async_session_maker() as session:
+        try:
+            # Check if any users exist
+            result = await session.execute(select(User).limit(1))
+            existing_user = result.scalar_one_or_none()
+
+            if existing_user:
+                return {
+                    "status": "skipped",
+                    "message": "Users already exist. Admin creation not allowed via this endpoint."
+                }
+
+            # Create default organization first
+            result = await session.execute(
+                select(Organization).where(Organization.slug == "default")
+            )
+            org = result.scalar_one_or_none()
+
+            if not org:
+                org = Organization(
+                    name="Default Organization",
+                    slug="default",
+                    is_active=True,
+                    max_concurrent_calls=10,
+                    timezone="UTC"
+                )
+                session.add(org)
+                await session.flush()
+
+            # Create admin user via raw SQL to avoid enum issues
+            hashed_pwd = get_password_hash("admin123")
+            user_id = str(uuid.uuid4())
+            await session.execute(
+                text("""
+                    INSERT INTO users (id, email, hashed_password, first_name, last_name,
+                                       is_active, is_superuser, role, organization_id)
+                    VALUES (:id, :email, :hashed_password, :first_name, :last_name,
+                            :is_active, :is_superuser, :role, :organization_id)
+                """),
+                {
+                    "id": user_id,
+                    "email": "admin@example.com",
+                    "hashed_password": hashed_pwd,
+                    "first_name": "Admin",
+                    "last_name": "User",
+                    "is_active": True,
+                    "is_superuser": True,
+                    "role": "admin",
+                    "organization_id": str(org.id)
+                }
+            )
+
+            await session.commit()
+            return {
+                "status": "success",
+                "message": "Admin user created successfully",
+                "credentials": {
+                    "email": "admin@example.com",
+                    "password": "admin123"
+                }
+            }
+        except Exception as e:
+            logger.error(f"Admin creation failed: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
