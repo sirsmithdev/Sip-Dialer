@@ -226,16 +226,25 @@ async def make_test_call(
     try:
         r = await get_redis()
 
-        # Check if dialer is online first
+        # Check if dialer is online - try sip_status first, fallback to call_manager_status
         sip_status_data = await r.get("dialer:sip_status")
+        call_manager_data = await r.get("dialer:call_manager_status")
+
+        dialer_online = False
         if sip_status_data:
             sip_status = json.loads(sip_status_data)
-            if sip_status.get("status") != "registered":
+            if sip_status.get("status") == "registered":
+                dialer_online = True
+            else:
                 return {
                     "success": False,
                     "message": "Dialer is not registered with SIP server. Please check SIP settings."
                 }
-        else:
+        elif call_manager_data:
+            # Dialer is running (call manager publishing status) - SIP status may have expired
+            dialer_online = True
+
+        if not dialer_online:
             return {
                 "success": False,
                 "message": "Dialer engine is not running or not connected."
