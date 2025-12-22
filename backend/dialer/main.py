@@ -7,7 +7,7 @@ by connecting directly as a PJSIP extension to the UCM6302/PBX.
 The dialer acts like a SIP softphone - it registers with the PBX,
 then originates calls using SIP INVITE with full RTP media support.
 
-Version: 2.0.1 - Redis listener retry loop fix (2025-12-22)
+Version: 2.0.2 - Fix deprecated Redis close() -> aclose() (2025-12-22)
 """
 import asyncio
 import logging
@@ -1085,15 +1085,15 @@ class DialerEngine:
                 logger.error(f"Redis listener error: {e}. Reconnecting in 5 seconds...")
                 await asyncio.sleep(5)
             finally:
-                # Clean up connections
+                # Clean up connections - use aclose() for async Redis clients
                 try:
                     if pubsub:
                         await pubsub.unsubscribe("dialer:test_call")
-                        await pubsub.close()
+                        await pubsub.aclose()
                     if r:
-                        await r.close()
-                except Exception:
-                    pass
+                        await r.aclose()
+                except Exception as cleanup_err:
+                    logger.debug(f"Cleanup error (safe to ignore): {cleanup_err}")
 
     async def _monitor_test_call(self, call, redis_client):
         """Monitor a test call and publish status updates."""
