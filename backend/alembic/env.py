@@ -85,19 +85,19 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection, use_app_schema: bool = False) -> None:
+def do_run_migrations(connection: Connection, schema_name: str = None) -> None:
     """Run migrations with a connection."""
     import logging
     logger = logging.getLogger("alembic.env")
 
-    if use_app_schema:
-        logger.info("Configuring alembic to use 'app' schema for version table and tables")
-        # Configure alembic to use app schema for version table
+    if schema_name:
+        logger.info(f"Configuring alembic to use '{schema_name}' schema for version table and tables")
+        # Configure alembic to use the target schema for version table
         # The search_path was already set via server_settings in connect_args
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            version_table_schema="app",
+            version_table_schema=schema_name,
             include_schemas=True,
         )
     else:
@@ -142,17 +142,18 @@ async def run_async_migrations() -> None:
         ssl_context.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ssl_context
 
-    use_app_schema = False
+    # For DO databases, find a schema we can write to
+    target_schema = None  # None means use default (public)
 
-    # For DO databases, try to use the app schema if it exists
     if is_do_db:
-        debug("DO database detected - checking for 'app' schema")
+        debug("DO database detected - finding writable schema")
         import asyncpg
 
         parsed = urlparse(db_url)
-        debug(f"Connecting to: {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}")
+        db_name = parsed.path.lstrip('/')
+        debug(f"Connecting to: {parsed.hostname}:{parsed.port or 5432}/{db_name}")
         try:
-            # Connect directly with asyncpg to check/create schema
+            # Connect directly with asyncpg to check schemas
             ssl_arg = connect_args.get("ssl", False) if use_ssl else False
             debug(f"Using SSL: {bool(ssl_arg)}")
             conn = await asyncpg.connect(
@@ -160,42 +161,80 @@ async def run_async_migrations() -> None:
                 port=parsed.port or 5432,
                 user=parsed.username,
                 password=parsed.password,
-                database=parsed.path.lstrip('/'),
+                database=db_name,
                 ssl=ssl_arg
             )
             try:
-                # First, check if app schema already exists
-                result = await conn.fetchval(
-                    "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'app'"
+                # List all available schemas
+                schemas = await conn.fetch(
+                    "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name"
                 )
-                if result:
-                    debug("'app' schema already exists")
-                    use_app_schema = True
-                else:
-                    # Try to create the app schema
+                schema_list = [r['schema_name'] for r in schemas]
+                debug(f"Available schemas: {schema_list}")
+
+                # Check current search_path
+                search_path = await conn.fetchval("SHOW search_path")
+                debug(f"Current search_path: {search_path}")
+
+                # DO App Platform dev databases use a schema matching the database name
+                # or the username. Let's check for common patterns.
+                username = parsed.username
+
+                # Priority order for schema selection:
+                # 1. Schema matching database name (DO convention for dev DBs)
+                # 2. Schema matching username
+                # 3. 'app' schema
+                # 4. Try to create 'app' schema
+                # 5. Fall back to public
+
+                for candidate in [db_name, username, 'app']:
+                    if candidate in schema_list:
+                        debug(f"Found candidate schema: '{candidate}'")
+                        # Test if we can write to this schema
+                        try:
+                            test_table = f'"{candidate}"._alembic_test_{os.getpid()}'
+                            await conn.execute(f"CREATE TABLE {test_table} (id int)")
+                            await conn.execute(f"DROP TABLE {test_table}")
+                            debug(f"Schema '{candidate}' is writable!")
+                            target_schema = candidate
+                            break
+                        except Exception as test_err:
+                            debug(f"Schema '{candidate}' not writable: {test_err}")
+                            continue
+
+                # If no existing schema works, try to create 'app'
+                if not target_schema:
                     try:
                         await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
                         debug("Created 'app' schema successfully")
-                        use_app_schema = True
+                        target_schema = 'app'
                     except Exception as schema_err:
-                        # Permission denied - fall back to public schema
                         debug(f"Cannot create app schema: {schema_err}")
-                        debug("Falling back to public schema")
-                        use_app_schema = False
+
+                # Last resort: try public
+                if not target_schema:
+                    try:
+                        test_table = f'public._alembic_test_{os.getpid()}'
+                        await conn.execute(f"CREATE TABLE {test_table} (id int)")
+                        await conn.execute(f"DROP TABLE {test_table}")
+                        debug("'public' schema is writable")
+                        target_schema = None  # Use default
+                    except Exception as pub_err:
+                        debug(f"WARNING: 'public' schema also not writable: {pub_err}")
+                        debug("Migrations may fail!")
+
             finally:
                 await conn.close()
         except Exception as e:
-            debug(f"ERROR: Could not connect to check/create app schema: {type(e).__name__}: {e}")
+            debug(f"ERROR: Could not connect to check schemas: {type(e).__name__}: {e}")
             import traceback
             debug(f"Traceback: {traceback.format_exc()}")
-            # If we can't connect, fall back to public schema
-            use_app_schema = False
 
-        if use_app_schema:
-            connect_args["server_settings"] = {"search_path": "app,public"}
-            debug("Using 'app' schema - setting search_path to app,public")
+        if target_schema:
+            connect_args["server_settings"] = {"search_path": f"{target_schema},public"}
+            debug(f"Using '{target_schema}' schema - setting search_path to {target_schema},public")
         else:
-            debug("Using 'public' schema (default)")
+            debug("Using default 'public' schema")
     else:
         debug("Not a DO database, using public schema")
 
@@ -206,8 +245,8 @@ async def run_async_migrations() -> None:
     )
 
     async with connectable.connect() as connection:
-        # Pass the use_app_schema flag to configure alembic correctly
-        await connection.run_sync(lambda conn: do_run_migrations(conn, use_app_schema))
+        # Pass the target schema to configure alembic correctly
+        await connection.run_sync(lambda conn: do_run_migrations(conn, target_schema))
 
     await connectable.dispose()
 
