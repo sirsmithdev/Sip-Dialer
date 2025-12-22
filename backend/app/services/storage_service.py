@@ -22,13 +22,15 @@ class StorageService:
 
     @property
     def client(self) -> Minio:
-        """Get or create MinIO client."""
+        """Get or create MinIO client (works with both MinIO and DigitalOcean Spaces)."""
         if self._client is None:
+            logger.info(f"Initializing storage client: endpoint={settings.s3_endpoint}, secure={settings.s3_secure}, region={settings.s3_region}")
             self._client = Minio(
-                endpoint=settings.minio_endpoint,
-                access_key=settings.minio_access_key,
-                secret_key=settings.minio_secret_key,
-                secure=settings.minio_secure,
+                endpoint=settings.s3_endpoint,
+                access_key=settings.s3_access_key,
+                secret_key=settings.s3_secret_key,
+                secure=settings.s3_secure,
+                region=settings.s3_region,
             )
         return self._client
 

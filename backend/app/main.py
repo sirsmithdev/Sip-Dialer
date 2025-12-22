@@ -2,6 +2,7 @@
 SIP Auto-Dialer API - Main Application Entry Point
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,6 +15,21 @@ from app.db.session import engine
 from app.db.base import Base
 
 logger = logging.getLogger(__name__)
+
+# Log S3 configuration at module load time for debugging
+logger.info("=" * 60)
+logger.info("S3 CONFIGURATION DEBUG (from settings)")
+logger.info(f"  s3_endpoint: {settings.s3_endpoint}")
+logger.info(f"  s3_bucket: {settings.s3_bucket}")
+logger.info(f"  s3_secure: {settings.s3_secure} (type: {type(settings.s3_secure).__name__})")
+logger.info(f"  s3_region: {settings.s3_region}")
+logger.info(f"  s3_access_key: {settings.s3_access_key[:8]}..." if settings.s3_access_key else "  s3_access_key: None")
+logger.info("S3 CONFIGURATION DEBUG (from env vars)")
+logger.info(f"  S3_ENDPOINT env: {os.environ.get('S3_ENDPOINT', 'NOT SET')}")
+logger.info(f"  S3_SECURE env: {os.environ.get('S3_SECURE', 'NOT SET')}")
+logger.info(f"  S3_BUCKET env: {os.environ.get('S3_BUCKET', 'NOT SET')}")
+logger.info(f"  S3_REGION env: {os.environ.get('S3_REGION', 'NOT SET')}")
+logger.info("=" * 60)
 
 
 @asynccontextmanager
