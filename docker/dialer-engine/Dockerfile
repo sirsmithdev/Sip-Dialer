@@ -6,6 +6,7 @@
 #
 # PJSIP provides full SIP stack with:
 # - SIP registration with digest authentication
+# - TLS 1.2+ support for secure SIP
 # - RTP media handling for audio playback
 # - DTMF detection (RFC 2833)
 # - Full codec support (G.711, G.722, etc.)
@@ -45,7 +46,7 @@ RUN wget -q https://github.com/pjsip/pjproject/archive/refs/tags/2.14.1.tar.gz \
 
 WORKDIR /build/pjproject-2.14.1
 
-# Configure PJSIP with Python bindings
+# Configure PJSIP with Python bindings and TLS support
 RUN ./configure \
     --enable-shared \
     --with-external-speex \
@@ -53,6 +54,7 @@ RUN ./configure \
     --disable-video \
     --disable-v4l2 \
     --disable-opencore-amr \
+    --with-ssl=/usr \
     CFLAGS="-O2 -fPIC" \
     && make dep \
     && make -j$(nproc) \
@@ -72,7 +74,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
+# Install runtime dependencies (including ca-certificates for TLS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     libssl3 \
@@ -82,6 +84,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus0 \
     libsndfile1 \
     libgsm1 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy PJSIP libraries from builder (including all .so files)
@@ -102,7 +105,7 @@ COPY . .
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
-# Create audio directory
+# Create audio directory for local cache
 RUN mkdir -p /var/lib/autodialer/audio && chown -R appuser:appuser /var/lib/autodialer
 
 USER appuser
@@ -111,14 +114,11 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 ENV AUDIO_BASE_PATH=/var/lib/autodialer/audio
 
-# Expose ports
-# - 5061/udp: Local SIP signaling port
-# - 10000-20000/udp: RTP media port range
-EXPOSE 5061/udp
-EXPOSE 10000-20000/udp
+# Note: DO App Platform workers don't need EXPOSE - they don't receive inbound traffic
+# The dialer makes outbound SIP/RTP connections only
 
 # Health check - verify Python can import pjsua2
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import pjsua2; print('PJSUA2 OK')" || exit 1
 
 # Run the dialer engine

@@ -15,10 +15,15 @@ import sys
 from datetime import datetime, time as dt_time, timedelta
 from typing import Optional, Dict, Any, List
 
+import ssl
+from urllib.parse import urlparse
+
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, selectinload
 from minio import Minio
+import boto3
+from botocore.config import Config as BotoConfig
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -111,12 +116,15 @@ class DialerEngine:
         # Audio file base path (local cache)
         self.audio_base_path = os.getenv("AUDIO_BASE_PATH", "/var/lib/autodialer/audio")
 
-        # MinIO configuration
-        self.minio_endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-        self.minio_access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-        self.minio_secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-        self.minio_bucket = os.getenv("MINIO_BUCKET_AUDIO", "audio-files")
-        self.minio_client = None
+        # S3/Spaces configuration (supports MinIO, DO Spaces, AWS S3)
+        self.s3_endpoint = os.getenv("S3_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9000"))
+        self.s3_access_key = os.getenv("S3_ACCESS_KEY", os.getenv("MINIO_ACCESS_KEY", "minioadmin"))
+        self.s3_secret_key = os.getenv("S3_SECRET_KEY", os.getenv("MINIO_SECRET_KEY", "minioadmin"))
+        self.s3_bucket = os.getenv("S3_BUCKET", os.getenv("MINIO_BUCKET_AUDIO", "audio-files"))
+        self.s3_secure = os.getenv("S3_SECURE", "false").lower() == "true"
+        self.s3_region = os.getenv("S3_REGION", "us-east-1")
+        self.s3_client = None
+        self.minio_client = None  # Legacy support
 
         # Audio file cache (maps audio_file_id to local path)
         self._audio_cache: Dict[str, str] = {}
@@ -131,9 +139,45 @@ class DialerEngine:
         # Map call_id to campaign_contact info for result tracking
         self._call_contacts: Dict[str, Dict[str, str]] = {}
 
+    def _get_async_db_url_and_connect_args(self):
+        """Get async database URL and connect_args with SSL support for DO."""
+        from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+        db_url = self.db_url
+        connect_args = {}
+
+        # Ensure asyncpg driver
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        parsed = urlparse(db_url)
+
+        # Check if this is a DO managed database (requires SSL)
+        is_do_db = "db.ondigitalocean.com" in db_url or ":25060/" in db_url
+
+        if is_do_db:
+            # Create SSL context for DO managed database
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            connect_args["ssl"] = ssl_context
+
+        # Remove sslmode from URL (asyncpg doesn't support it)
+        if parsed.query:
+            params = parse_qs(parsed.query)
+            params.pop("sslmode", None)
+            params.pop("ssl", None)
+            new_query = urlencode({k: v[0] for k, v in params.items()}, doseq=False) if params else ""
+            db_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+
+        return db_url, connect_args
+
     async def _get_sip_settings(self) -> Optional[SIPSettings]:
         """Load SIP settings from database."""
-        engine = create_async_engine(self.db_url)
+        db_url, connect_args = self._get_async_db_url_and_connect_args()
+        engine = create_async_engine(db_url, connect_args=connect_args)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         async with async_session() as session:
@@ -155,8 +199,56 @@ class DialerEngine:
 
         await engine.dispose()
 
+    def _get_s3_client(self):
+        """Get or create S3 client (supports MinIO, DO Spaces, AWS S3)."""
+        if self.s3_client is None:
+            # Check if using DO Spaces or AWS S3 (vs local MinIO)
+            is_spaces = "digitaloceanspaces.com" in self.s3_endpoint
+            is_aws = "amazonaws.com" in self.s3_endpoint
+
+            if is_spaces or is_aws:
+                # Use boto3 for DO Spaces / AWS S3
+                endpoint_url = f"https://{self.s3_endpoint}" if self.s3_secure else f"http://{self.s3_endpoint}"
+                self.s3_client = boto3.client(
+                    "s3",
+                    endpoint_url=endpoint_url,
+                    aws_access_key_id=self.s3_access_key,
+                    aws_secret_access_key=self.s3_secret_key,
+                    region_name=self.s3_region,
+                    config=BotoConfig(signature_version="s3v4")
+                )
+                logger.info(f"Initialized S3 client for {self.s3_endpoint}")
+            else:
+                # Use MinIO client for local development
+                self.minio_client = Minio(
+                    self.s3_endpoint,
+                    access_key=self.s3_access_key,
+                    secret_key=self.s3_secret_key,
+                    secure=self.s3_secure
+                )
+                logger.info(f"Initialized MinIO client for {self.s3_endpoint}")
+
+        return self.s3_client or self.minio_client
+
+    def _download_from_s3(self, s3_path: str, local_path: str) -> bool:
+        """Download a file from S3/Spaces/MinIO."""
+        try:
+            client = self._get_s3_client()
+
+            if isinstance(client, Minio):
+                # MinIO client
+                client.fget_object(self.s3_bucket, s3_path, local_path)
+            else:
+                # boto3 client (DO Spaces / AWS S3)
+                client.download_file(self.s3_bucket, s3_path, local_path)
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to download {s3_path}: {e}")
+            return False
+
     def _resolve_audio_file(self, audio_file_id: str) -> str:
-        """Resolve audio file ID to filesystem path, downloading from MinIO if needed."""
+        """Resolve audio file ID to filesystem path, downloading from S3/Spaces if needed."""
         # Check cache first
         if audio_file_id in self._audio_cache:
             cached_path = self._audio_cache[audio_file_id]
@@ -173,25 +265,16 @@ class DialerEngine:
             self._audio_cache[audio_file_id] = local_path
             return local_path
 
-        # Initialize MinIO client if needed
-        if not self.minio_client:
-            self.minio_client = Minio(
-                self.minio_endpoint,
-                access_key=self.minio_access_key,
-                secret_key=self.minio_secret_key,
-                secure=False
-            )
-
-        # Look up audio file in database to get MinIO path (synchronous)
+        # Look up audio file in database to get S3 path (synchronous)
         try:
-            minio_path = self._get_audio_minio_path_sync(audio_file_id)
+            s3_path = self._get_audio_s3_path_sync(audio_file_id)
 
-            if minio_path:
-                logger.info(f"Downloading audio file {audio_file_id} from MinIO: {minio_path}")
-                self.minio_client.fget_object(self.minio_bucket, minio_path, local_path)
-                self._audio_cache[audio_file_id] = local_path
-                logger.info(f"Audio file downloaded to {local_path}")
-                return local_path
+            if s3_path:
+                logger.info(f"Downloading audio file {audio_file_id} from S3: {s3_path}")
+                if self._download_from_s3(s3_path, local_path):
+                    self._audio_cache[audio_file_id] = local_path
+                    logger.info(f"Audio file downloaded to {local_path}")
+                    return local_path
             else:
                 logger.error(f"Audio file {audio_file_id} not found in database")
         except Exception as e:
@@ -201,13 +284,20 @@ class DialerEngine:
 
         return local_path
 
-    def _get_audio_minio_path_sync(self, audio_file_id: str) -> Optional[str]:
-        """Get the MinIO path for an audio file from the database (synchronous)."""
+    def _get_audio_s3_path_sync(self, audio_file_id: str) -> Optional[str]:
+        """Get the S3 path for an audio file from the database (synchronous)."""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import Session
 
-        # Convert async URL to sync URL
+        # Convert async URL to sync URL and handle SSL for DO managed DB
         sync_db_url = self.db_url.replace("+asyncpg", "")
+        if sync_db_url.startswith("postgres://"):
+            sync_db_url = sync_db_url.replace("postgres://", "postgresql://", 1)
+
+        # Add sslmode for DO managed databases
+        is_do_db = "db.ondigitalocean.com" in sync_db_url or ":25060/" in sync_db_url
+        if is_do_db and "sslmode" not in sync_db_url:
+            sync_db_url += "&sslmode=require" if "?" in sync_db_url else "?sslmode=require"
 
         engine = create_engine(sync_db_url)
         try:
@@ -344,7 +434,8 @@ class DialerEngine:
         server = None
 
         try:
-            engine = create_async_engine(self.db_url)
+            db_url, connect_args = self._get_async_db_url_and_connect_args()
+            engine = create_async_engine(db_url, connect_args=connect_args)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
             async with async_session() as session:
@@ -388,7 +479,17 @@ class DialerEngine:
 
         try:
             redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-            r = redis.from_url(redis_url)
+
+            # Handle DO Managed Redis (rediss:// with self-signed certs)
+            if redis_url.startswith("rediss://"):
+                r = redis.from_url(
+                    redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    ssl_cert_reqs=None  # Disable cert verification for DO
+                )
+            else:
+                r = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
 
             active_calls = len(self.active_calls) if self.active_calls else 0
 
