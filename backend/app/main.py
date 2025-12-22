@@ -16,20 +16,20 @@ from app.db.base import Base
 
 logger = logging.getLogger(__name__)
 
-# Log S3 configuration at module load time for debugging
-logger.info("=" * 60)
-logger.info("S3 CONFIGURATION DEBUG (from settings)")
-logger.info(f"  s3_endpoint: {settings.s3_endpoint}")
-logger.info(f"  s3_bucket: {settings.s3_bucket}")
-logger.info(f"  s3_secure: {settings.s3_secure} (type: {type(settings.s3_secure).__name__})")
-logger.info(f"  s3_region: {settings.s3_region}")
-logger.info(f"  s3_access_key: {settings.s3_access_key[:8]}..." if settings.s3_access_key else "  s3_access_key: None")
-logger.info("S3 CONFIGURATION DEBUG (from env vars)")
-logger.info(f"  S3_ENDPOINT env: {os.environ.get('S3_ENDPOINT', 'NOT SET')}")
-logger.info(f"  S3_SECURE env: {os.environ.get('S3_SECURE', 'NOT SET')}")
-logger.info(f"  S3_BUCKET env: {os.environ.get('S3_BUCKET', 'NOT SET')}")
-logger.info(f"  S3_REGION env: {os.environ.get('S3_REGION', 'NOT SET')}")
-logger.info("=" * 60)
+# Log S3 configuration at module load time for debugging (using print for visibility)
+print("=" * 60)
+print("S3 CONFIGURATION DEBUG (from settings)")
+print(f"  s3_endpoint: {settings.s3_endpoint}")
+print(f"  s3_bucket: {settings.s3_bucket}")
+print(f"  s3_secure: {settings.s3_secure} (type: {type(settings.s3_secure).__name__})")
+print(f"  s3_region: {settings.s3_region}")
+print(f"  s3_access_key: {settings.s3_access_key[:8]}..." if settings.s3_access_key else "  s3_access_key: None")
+print("S3 CONFIGURATION DEBUG (from env vars)")
+print(f"  S3_ENDPOINT env: {os.environ.get('S3_ENDPOINT', 'NOT SET')}")
+print(f"  S3_SECURE env: {os.environ.get('S3_SECURE', 'NOT SET')}")
+print(f"  S3_BUCKET env: {os.environ.get('S3_BUCKET', 'NOT SET')}")
+print(f"  S3_REGION env: {os.environ.get('S3_REGION', 'NOT SET')}")
+print("=" * 60)
 
 
 @asynccontextmanager
@@ -81,6 +81,28 @@ async def health_check():
         "status": "healthy",
         "app": settings.app_name,
         "environment": settings.app_env,
+    }
+
+
+@app.get("/api/v1/debug/s3-config")
+async def debug_s3_config():
+    """Debug endpoint to check S3 configuration (remove in production)."""
+    return {
+        "settings": {
+            "s3_endpoint": settings.s3_endpoint,
+            "s3_bucket": settings.s3_bucket,
+            "s3_secure": settings.s3_secure,
+            "s3_secure_type": type(settings.s3_secure).__name__,
+            "s3_region": settings.s3_region,
+            "s3_access_key_preview": settings.s3_access_key[:8] + "..." if settings.s3_access_key else None,
+        },
+        "env_vars": {
+            "S3_ENDPOINT": os.environ.get("S3_ENDPOINT", "NOT SET"),
+            "S3_BUCKET": os.environ.get("S3_BUCKET", "NOT SET"),
+            "S3_SECURE": os.environ.get("S3_SECURE", "NOT SET"),
+            "S3_REGION": os.environ.get("S3_REGION", "NOT SET"),
+            "S3_ACCESS_KEY_PREVIEW": (os.environ.get("S3_ACCESS_KEY", "")[:8] + "...") if os.environ.get("S3_ACCESS_KEY") else "NOT SET",
+        }
     }
 
 
