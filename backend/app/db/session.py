@@ -55,14 +55,26 @@ def get_async_url_and_connect_args():
 async_db_url, async_connect_args = get_async_url_and_connect_args()
 
 # Check if this is a DO managed database that needs app schema
-# Detection: DO domain patterns, port 25060, or production environment
+# Detection: DO domain patterns, port 25060, production environment, or DO database name patterns
 import os
+import sys
+
+# DO App Platform dev databases use patterns like:
+# postgresql://db:password@private-xxx.db.ondigitalocean.com:25060/db
+# The domain contains .db.ondigitalocean.com or private-* patterns
 _is_do_db = (
     "db.ondigitalocean.com" in async_db_url or
     "@db-" in async_db_url or
     ":25060/" in async_db_url or
+    "private-" in async_db_url or
     os.environ.get("APP_ENV") == "production"
 )
+
+# Debug output for troubleshooting
+print(f"[DB-SESSION] Async URL pattern check: DO={_is_do_db}", file=sys.stderr)
+print(f"[DB-SESSION] APP_ENV={os.environ.get('APP_ENV', 'not set')}", file=sys.stderr)
+if _is_do_db:
+    print(f"[DB-SESSION] Setting search_path to 'app, public'", file=sys.stderr)
 
 # For DO databases, add server_settings to set search_path
 if _is_do_db:
@@ -99,8 +111,11 @@ _is_do_db_sync = (
     "db.ondigitalocean.com" in sync_db_url or
     "@db-" in sync_db_url or
     ":25060/" in sync_db_url or
+    "private-" in sync_db_url or
     os.environ.get("APP_ENV") == "production"
 )
+
+print(f"[DB-SESSION] Sync URL pattern check: DO={_is_do_db_sync}", file=sys.stderr)
 
 # For DO databases, configure SSL and schema
 if _is_do_db_sync:
