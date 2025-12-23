@@ -24,6 +24,7 @@ class IVRNodeType(str, enum.Enum):
     CONDITIONAL = "conditional"
     SET_VARIABLE = "set_variable"
     HANGUP = "hangup"
+    OPT_OUT = "opt_out"  # Adds caller to DNC list
 
 
 class IVRFlowStatus(str, enum.Enum):

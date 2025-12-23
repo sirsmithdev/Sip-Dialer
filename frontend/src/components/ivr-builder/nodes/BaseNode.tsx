@@ -11,6 +11,7 @@ import {
   GitBranch,
   Variable,
   PhoneOff,
+  UserMinus,
   type LucideIcon,
 } from 'lucide-react';
 import type { IVRNodeData, IVRNodeType } from '../types';
@@ -25,6 +26,7 @@ const iconMap: Record<string, LucideIcon> = {
   GitBranch,
   Variable,
   PhoneOff,
+  UserMinus,
 };
 
 const nodeStyles: Record<IVRNodeType, { bg: string; border: string; icon: string }> = {
@@ -37,6 +39,7 @@ const nodeStyles: Record<IVRNodeType, { bg: string; border: string; icon: string
   conditional: { bg: 'bg-yellow-500/10', border: 'border-yellow-500', icon: 'GitBranch' },
   set_variable: { bg: 'bg-indigo-500/10', border: 'border-indigo-500', icon: 'Variable' },
   hangup: { bg: 'bg-gray-500/10', border: 'border-gray-500', icon: 'PhoneOff' },
+  opt_out: { bg: 'bg-rose-500/10', border: 'border-rose-500', icon: 'UserMinus' },
 };
 
 interface BaseNodeProps {
@@ -50,7 +53,9 @@ function BaseNodeComponent({ data, selected }: BaseNodeProps) {
   const Icon = iconMap[style.icon];
 
   const isStart = nodeType === 'start';
-  const isEnd = nodeType === 'hangup';
+  // Opt-out can be an end node if hangupAfter is true (default)
+  const isOptOutEnd = nodeType === 'opt_out' && (data as { hangupAfter?: boolean }).hangupAfter !== false;
+  const isEnd = nodeType === 'hangup' || isOptOutEnd;
   const hasMultipleOutputs = nodeType === 'menu' || nodeType === 'conditional';
 
   return (
@@ -161,6 +166,13 @@ function NodeContent({ data }: { data: IVRNodeData }) {
       return (
         <p className="text-xs text-muted-foreground mt-2">
           Max {data.maxDuration}s
+        </p>
+      );
+
+    case 'opt_out':
+      return (
+        <p className="text-xs text-rose-600 dark:text-rose-400 mt-2">
+          Adds to DNC list
         </p>
       );
 

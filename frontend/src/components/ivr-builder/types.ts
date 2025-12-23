@@ -10,7 +10,8 @@ export type IVRNodeType =
   | 'transfer'
   | 'conditional'
   | 'set_variable'
-  | 'hangup';
+  | 'hangup'
+  | 'opt_out';
 
 // Node data interfaces - using index signature for React Flow compatibility
 export interface BaseNodeData {
@@ -79,6 +80,14 @@ export interface HangupNodeData extends BaseNodeData {
   reason?: string;
 }
 
+export interface OptOutNodeData extends BaseNodeData {
+  type: 'opt_out';
+  confirmationAudioId?: string;
+  confirmationAudioName?: string;
+  hangupAfter?: boolean;
+  reason?: string;
+}
+
 export type IVRNodeData =
   | StartNodeData
   | PlayAudioNodeData
@@ -88,7 +97,8 @@ export type IVRNodeData =
   | TransferNodeData
   | ConditionalNodeData
   | SetVariableNodeData
-  | HangupNodeData;
+  | HangupNodeData
+  | OptOutNodeData;
 
 // Custom IVR Node type (simplified for React Flow compatibility)
 export interface IVRNode {
@@ -209,5 +219,13 @@ export const NODE_CONFIGS: NodeConfig[] = [
     icon: 'PhoneOff',
     color: 'bg-gray-500',
     defaultData: { label: 'Hangup', type: 'hangup' },
+  },
+  {
+    type: 'opt_out',
+    label: 'Opt Out',
+    description: 'Add caller to Do-Not-Call list',
+    icon: 'UserMinus',
+    color: 'bg-rose-500',
+    defaultData: { label: 'Opt Out', type: 'opt_out', hangupAfter: true, reason: 'User requested removal' },
   },
 ];

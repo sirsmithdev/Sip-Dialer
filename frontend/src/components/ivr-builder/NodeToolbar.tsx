@@ -9,6 +9,7 @@ import {
   GitBranch,
   Variable,
   PhoneOff,
+  UserMinus,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -24,6 +25,7 @@ const iconMap: Record<string, LucideIcon> = {
   GitBranch,
   Variable,
   PhoneOff,
+  UserMinus,
 };
 
 interface NodeToolbarProps {

@@ -280,6 +280,56 @@ function NodeConfigPanelComponent({ node, onClose, onUpdate, onDelete }: NodeCon
             />
           </div>
         )}
+
+        {data.type === 'opt_out' && (
+          <>
+            <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-md">
+              <p className="text-xs text-rose-600 dark:text-rose-400">
+                This node will add the caller's phone number to the Do-Not-Call (DNC) list.
+                They will not receive future calls from this organization.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmationAudio">Confirmation Audio (optional)</Label>
+              <Select
+                value={data.confirmationAudioId || ''}
+                onValueChange={(v) => handleChange('confirmationAudioId', v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select audio file" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="demo-optout-confirm">Opt-out Confirmation</SelectItem>
+                  <SelectItem value="demo-goodbye">Goodbye</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Audio to play after opt-out is recorded
+              </p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="hangupAfter">Hang up after opt-out</Label>
+              <Switch
+                id="hangupAfter"
+                checked={data.hangupAfter !== false}
+                onCheckedChange={(v) => handleChange('hangupAfter', v)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reason">DNC Reason</Label>
+              <Input
+                id="reason"
+                value={data.reason || ''}
+                onChange={(e) => handleChange('reason', e.target.value)}
+                placeholder="User requested removal"
+              />
+              <p className="text-xs text-muted-foreground">
+                Reason stored in DNC entry for reference
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Footer */}

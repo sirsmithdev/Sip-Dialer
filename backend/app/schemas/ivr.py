@@ -52,6 +52,11 @@ class IVRNodeData(BaseModel):
     # Wait for DTMF after playing audio
     wait_for_dtmf: Optional[bool] = False
 
+    # Opt-out node
+    confirmation_audio_id: Optional[str] = None  # Audio to play after opt-out
+    hangup_after: Optional[bool] = True  # Hang up after opt-out (default: True)
+    reason: Optional[str] = None  # Reason for opt-out (stored in DNC entry)
+
     class Config:
         extra = "allow"  # Allow additional fields for extensibility
 

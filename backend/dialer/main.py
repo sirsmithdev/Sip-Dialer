@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models.sip_settings import SIPSettings
 from app.models.audio import AudioFile
 from app.models.campaign import Campaign, CampaignContact, CampaignStatus, ContactStatus, CallDisposition
-from app.models.contact import Contact
+from app.models.contact import Contact, DNCEntry
 from app.models.ivr import IVRFlow, IVRFlowVersion
 from app.models.call_log import CallLog, CallResult, CallDirection
 from app.models.survey import SurveyResponse
@@ -1427,6 +1427,60 @@ class DialerEngine:
                         f"Created SurveyResponse for call {call_id}: "
                         f"{len(ivr_result.survey_responses)} responses"
                     )
+
+                # Handle opt-out: Add caller to DNC list
+                if getattr(ivr_result, 'opted_out', False):
+                    # Get contact phone number and organization_id
+                    phone_number = None
+                    organization_id = None
+
+                    if contact_id:
+                        contact_result = await session.execute(
+                            select(Contact).where(Contact.id == contact_id)
+                        )
+                        contact = contact_result.scalar_one_or_none()
+                        if contact:
+                            phone_number = contact.phone
+
+                    # Get organization from campaign
+                    if campaign_id:
+                        campaign_result = await session.execute(
+                            select(Campaign).where(Campaign.id == campaign_id)
+                        )
+                        campaign = campaign_result.scalar_one_or_none()
+                        if campaign:
+                            organization_id = campaign.organization_id
+
+                    if phone_number and organization_id:
+                        # Check if already on DNC list
+                        existing_dnc = await session.execute(
+                            select(DNCEntry).where(
+                                DNCEntry.phone_number == phone_number,
+                                DNCEntry.organization_id == organization_id
+                            )
+                        )
+                        if not existing_dnc.scalar_one_or_none():
+                            # Create DNC entry
+                            dnc_entry = DNCEntry(
+                                id=str(uuid.uuid4()),
+                                phone_number=phone_number,
+                                organization_id=organization_id,
+                                source="ivr_opt_out",
+                                reason=ivr_result.variables.get("opt_out_reason", "User requested opt-out via IVR")
+                            )
+                            session.add(dnc_entry)
+                            logger.info(
+                                f"Added {phone_number} to DNC list (opt-out via IVR, call {call_id})"
+                            )
+
+                            # Update call log metadata to indicate opt-out
+                            if call_log:
+                                call_log.call_metadata["opted_out"] = True
+                                call_log.call_metadata["dnc_added"] = True
+                        else:
+                            logger.info(
+                                f"Phone {phone_number} already on DNC list (call {call_id})"
+                            )
 
                 await session.commit()
                 logger.info(f"Saved IVR results for call {call_id}")

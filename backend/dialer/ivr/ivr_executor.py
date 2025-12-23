@@ -39,6 +39,7 @@ class IVRNodeType(str, Enum):
     CONDITIONAL = "conditional"
     SET_VARIABLE = "set_variable"
     HANGUP = "hangup"
+    OPT_OUT = "opt_out"  # Adds caller to DNC list
 
 
 @dataclass
@@ -47,11 +48,14 @@ class IVRContext:
     call_id: str
     contact_id: Optional[str] = None
     campaign_id: Optional[str] = None
+    phone_number: Optional[str] = None  # For DNC opt-out
+    organization_id: Optional[str] = None  # For DNC opt-out
     variables: Dict[str, Any] = field(default_factory=dict)
     survey_responses: Dict[str, str] = field(default_factory=dict)
     dtmf_inputs: List[str] = field(default_factory=list)
     start_time: float = field(default_factory=time.time)
     current_node_id: Optional[str] = None
+    opted_out: bool = False  # Set to True if caller opted out
 
 
 @dataclass
@@ -65,6 +69,7 @@ class IVRResult:
     duration_seconds: float
     last_node_id: Optional[str] = None
     error_message: Optional[str] = None
+    opted_out: bool = False  # True if caller chose to opt out
 
 
 class IVRExecutor:
@@ -186,7 +191,8 @@ class IVRExecutor:
                 dtmf_inputs=self._context.dtmf_inputs,
                 variables=self._context.variables,
                 duration_seconds=time.time() - start_time,
-                last_node_id=self._context.current_node_id
+                last_node_id=self._context.current_node_id,
+                opted_out=self._context.opted_out
             )
 
         except Exception as e:
@@ -200,7 +206,8 @@ class IVRExecutor:
                 variables=self._context.variables if self._context else {},
                 duration_seconds=time.time() - start_time,
                 last_node_id=self._context.current_node_id if self._context else None,
-                error_message=str(e)
+                error_message=str(e),
+                opted_out=self._context.opted_out if self._context else False
             )
 
     async def _process_node(self, node: Dict) -> Optional[str]:
@@ -242,6 +249,9 @@ class IVRExecutor:
 
         elif node_type == IVRNodeType.RECORD.value:
             return await self._handle_record_node(node, node_data)
+
+        elif node_type == IVRNodeType.OPT_OUT.value:
+            return await self._handle_opt_out_node(node, node_data)
 
         else:
             logger.warning(f"Unknown node type: {node_type}")
@@ -450,6 +460,43 @@ class IVRExecutor:
         """Handle RECORD node (not implemented yet)."""
         # Recording requires RTP capture - not implemented
         logger.warning("Recording not yet implemented in direct SIP mode")
+        return self._get_default_next_node(node)
+
+    async def _handle_opt_out_node(self, node: Dict, data: Dict) -> Optional[str]:
+        """
+        Handle OPT_OUT node - marks caller for DNC list addition.
+
+        The actual DNC entry creation happens in the dialer main.py after
+        IVR execution completes, using the opted_out flag in IVRResult.
+
+        This node can optionally:
+        - Play a confirmation audio
+        - Then hang up or continue to next node
+        """
+        # Mark context as opted out
+        self._context.opted_out = True
+        self._context.variables["opt_out_reason"] = data.get("reason", "user_request")
+
+        logger.info(
+            f"Call {self._context.call_id}: Caller opted out "
+            f"(phone: {self._context.phone_number})"
+        )
+
+        # Play confirmation audio if specified
+        confirmation_audio_id = data.get("confirmation_audio_id")
+        if confirmation_audio_id:
+            audio_path = self.audio_file_resolver(confirmation_audio_id)
+            try:
+                await self.media.play_file(audio_path, wait_for_completion=True)
+            except Exception as e:
+                logger.error(f"Error playing opt-out confirmation: {e}")
+
+        # Check if we should hang up after opt-out (default: yes)
+        hangup_after = data.get("hangup_after", True)
+        if hangup_after:
+            self.call.hangup()
+            return None
+
         return self._get_default_next_node(node)
 
     def _get_default_next_node(self, node: Dict) -> Optional[str]:
