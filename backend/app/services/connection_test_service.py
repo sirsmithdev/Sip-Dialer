@@ -88,8 +88,32 @@ class ConnectionTestService:
         test_steps = []
         start_time = time.time()
         sock = None
+        dialer_registered = False
 
         self.logger.info(f"Starting SIP test to {sip_server}:{sip_port} via {sip_transport}")
+
+        # Step 0: Check dialer engine status first (this shows if UCM is responding)
+        dialer_status = self._get_dialer_status()
+        if dialer_status:
+            status = dialer_status.get("status", "unknown")
+            extension = dialer_status.get("extension", "unknown")
+            active_calls = dialer_status.get("active_calls", 0)
+
+            if status == "registered":
+                dialer_registered = True
+                test_steps.append(f"✓ Dialer engine registered with UCM as extension {extension}")
+                if active_calls > 0:
+                    test_steps.append(f"✓ {active_calls} active call(s) in progress")
+                self.logger.info(f"Dialer is registered as {extension}, {active_calls} active calls")
+            elif status == "unregistered":
+                test_steps.append(f"⚠ Dialer engine not currently registered (status: {status})")
+            elif status == "error":
+                error_detail = dialer_status.get("error", "unknown error")
+                test_steps.append(f"✗ Dialer engine error: {error_detail}")
+            else:
+                test_steps.append(f"⚠ Dialer engine status: {status}")
+        else:
+            test_steps.append("⚠ Could not retrieve dialer engine status (dialer may be starting up)")
 
         try:
             # Step 1: Resolve DNS
@@ -211,15 +235,27 @@ class ConnectionTestService:
 
             self.logger.info(f"SIP test completed: success={success}, timing={timing_ms}ms")
 
+            # Enhance message if dialer is also registered
+            if success and dialer_registered:
+                message = f"{message}. Dialer is registered with UCM."
+                if server_info is None:
+                    server_info = {}
+                server_info["dialer_status"] = "registered"
+
             return SIPConnectionTestResponse(
                 success=success,
                 message=message,
-                details={"host": sip_server, "port": sip_port, "extension": sip_username},
+                details={
+                    "host": sip_server,
+                    "port": sip_port,
+                    "extension": sip_username,
+                    "dialer_registered": dialer_registered
+                },
                 timing_ms=timing_ms,
                 resolved_ip=resolved_ip,
                 test_steps=test_steps,
                 server_info=server_info if server_info else None,
-                registered=None,  # OPTIONS doesn't register
+                registered=dialer_registered,
                 diagnostic_hint=None if success else self._get_diagnostic_hint(message)
             )
 
@@ -229,52 +265,45 @@ class ConnectionTestService:
             timing_ms = int((time.time() - start_time) * 1000)
             self.logger.warning("SIP OPTIONS request - no response received")
 
-            # Check if the dialer is actually registered (many PBXes don't respond to OPTIONS)
-            dialer_status = self._get_dialer_status()
-            if dialer_status and dialer_status.get("status") == "registered":
-                # Dialer is registered, so the connection is actually working
-                test_steps.append("⚠ No OPTIONS response (some PBXes don't respond to OPTIONS)")
-                test_steps.append(f"✓ Dialer engine is registered as extension {dialer_status.get('extension', 'unknown')}")
-                if dialer_status.get("active_calls", 0) > 0:
-                    test_steps.append(f"✓ {dialer_status['active_calls']} active call(s)")
+            # If dialer is registered (we checked at start), connection is working
+            if dialer_registered:
+                # Dialer is registered, so UCM is responding - just not to OPTIONS
+                test_steps.append("⚠ UCM did not respond to OPTIONS probe (this is normal for many PBXes)")
+                test_steps.append("✓ Connection verified via dialer registration")
 
                 return SIPConnectionTestResponse(
                     success=True,
-                    message=f"SIP connection verified - dialer is registered (extension {dialer_status.get('extension', 'unknown')})",
+                    message=f"SIP connection working - dialer is registered with UCM (extension {dialer_status.get('extension', 'unknown')})",
                     details={
                         "host": sip_server,
                         "port": sip_port,
                         "extension": dialer_status.get("extension"),
                         "active_calls": dialer_status.get("active_calls", 0),
-                        "note": "OPTIONS timeout but dialer registration confirmed"
+                        "note": "UCM is responding to the dialer - OPTIONS probe was ignored (normal behavior)"
                     },
                     timing_ms=timing_ms,
                     resolved_ip=resolved_ip,
                     test_steps=test_steps,
-                    server_info={"dialer_status": dialer_status.get("status")},
+                    server_info={"dialer_status": "registered", "ucm_responding": True},
                     registered=True,
                     diagnostic_hint=None
                 )
             else:
-                # Dialer not registered and no OPTIONS response
+                # Dialer not registered and no OPTIONS response - real problem
                 error_msg = "No SIP response received (timeout after 5 seconds)"
                 test_steps.append(f"✗ {error_msg}")
-
-                # Add dialer status info if available
-                if dialer_status:
-                    test_steps.append(f"⚠ Dialer status: {dialer_status.get('status', 'unknown')}")
-                    if dialer_status.get("error"):
-                        test_steps.append(f"⚠ Dialer error: {dialer_status.get('error')}")
+                test_steps.append("✗ Dialer engine is also not registered with UCM")
+                test_steps.append("⚠ Check: UCM firewall, SIP port, credentials, and network connectivity")
 
                 return SIPConnectionTestResponse(
                     success=False,
-                    message=error_msg,
+                    message="SIP connection failed - no response from UCM and dialer not registered",
                     details={"host": sip_server, "port": sip_port},
                     timing_ms=timing_ms,
                     resolved_ip=resolved_ip,
                     test_steps=test_steps,
                     registered=False,
-                    diagnostic_hint=self._get_diagnostic_hint("No SIP response")
+                    diagnostic_hint="The UCM is not responding. Verify the SIP server address, port, and that the UCM firewall allows connections from this server."
                 )
 
         except ConnectionRefusedError as e:
