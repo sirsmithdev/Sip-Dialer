@@ -170,6 +170,16 @@ export const sipSettingsApi = {
     const response = await api.get('/settings/dialer/status');
     return response.data;
   },
+
+  makeTestCall: async (params: {
+    phone_number: string;
+    caller_id?: string;
+    audio_file?: string;
+    voicemail_audio_file?: string;
+  }): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/settings/dialer/test-call', null, { params });
+    return response.data;
+  },
 };
 
 // Users API
