@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
 import { useWebSocketContext, useSIPStatus } from '@/contexts/WebSocketContext';
 import { useNavigate } from 'react-router-dom';
-import { campaignsApi } from '@/services/api';
+import { campaignsApi, sipSettingsApi } from '@/services/api';
 import {
   Phone,
   PhoneOutgoing,
@@ -21,13 +21,65 @@ import {
   Wifi,
   WifiOff,
   AlertCircle,
+  Loader2,
 } from 'lucide-react';
 
 function SIPStatusIndicator() {
   const sipStatus = useSIPStatus();
   const { isConnected: wsConnected } = useWebSocketContext();
 
-  if (!wsConnected) {
+  // Fallback: Query SIP settings from database when WebSocket status is unavailable
+  const { data: sipSettings, isLoading: settingsLoading } = useQuery({
+    queryKey: ['sip-settings-status'],
+    queryFn: sipSettingsApi.get,
+    enabled: !sipStatus, // Only fetch when we don't have WebSocket status
+    staleTime: 30000, // Cache for 30 seconds
+    retry: 1,
+  });
+
+  // Also try to get real-time dialer status as fallback
+  const { data: dialerStatus, isLoading: dialerLoading } = useQuery({
+    queryKey: ['dialer-status'],
+    queryFn: sipSettingsApi.getDialerStatus,
+    enabled: !sipStatus, // Only fetch when we don't have WebSocket status
+    staleTime: 10000, // Cache for 10 seconds
+    refetchInterval: 30000, // Poll every 30 seconds
+    retry: 1,
+  });
+
+  // Determine the effective status to display
+  const effectiveStatus = (() => {
+    // Priority 1: WebSocket real-time status
+    if (sipStatus && sipStatus.status !== 'unknown') {
+      return {
+        status: sipStatus.status,
+        extension: sipStatus.extension,
+        active_calls: sipStatus.active_calls || 0,
+      };
+    }
+
+    // Priority 2: Dialer status from API (Redis)
+    if (dialerStatus?.sip && dialerStatus.sip.status !== 'unknown') {
+      return {
+        status: dialerStatus.sip.status,
+        extension: dialerStatus.sip.extension,
+        active_calls: dialerStatus.sip.active_calls || 0,
+      };
+    }
+
+    // Priority 3: SIP settings from database
+    if (sipSettings?.connection_status) {
+      return {
+        status: sipSettings.connection_status,
+        extension: sipSettings.extension,
+        active_calls: 0,
+      };
+    }
+
+    return null;
+  })();
+
+  if (!wsConnected && !effectiveStatus) {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-sm">
         <WifiOff className="w-4 h-4" />
@@ -36,11 +88,20 @@ function SIPStatusIndicator() {
     );
   }
 
-  if (!sipStatus) {
+  if (settingsLoading || dialerLoading) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-sm">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        <span>Loading...</span>
+      </div>
+    );
+  }
+
+  if (!effectiveStatus) {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-sm">
         <AlertCircle className="w-4 h-4" />
-        <span>SIP Unknown</span>
+        <span>SIP Not Configured</span>
       </div>
     );
   }
@@ -52,17 +113,17 @@ function SIPStatusIndicator() {
     failed: { bg: 'bg-red-500/10', text: 'text-red-600', dot: 'bg-red-500' },
   };
 
-  const colors = statusColors[sipStatus.status] || statusColors.disconnected;
+  const colors = statusColors[effectiveStatus.status] || statusColors.disconnected;
 
   return (
     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${colors.bg} ${colors.text} text-sm`}>
-      <span className={`w-2 h-2 rounded-full ${colors.dot} ${sipStatus.status === 'registered' ? 'animate-pulse' : ''}`} />
+      <span className={`w-2 h-2 rounded-full ${colors.dot} ${effectiveStatus.status === 'registered' ? 'animate-pulse' : ''}`} />
       <Wifi className="w-4 h-4" />
-      <span className="capitalize">{sipStatus.status}</span>
-      {sipStatus.extension && <span className="opacity-75">({sipStatus.extension})</span>}
-      {sipStatus.active_calls > 0 && (
+      <span className="capitalize">{effectiveStatus.status}</span>
+      {effectiveStatus.extension && <span className="opacity-75">({effectiveStatus.extension})</span>}
+      {effectiveStatus.active_calls > 0 && (
         <span className="ml-1 px-1.5 py-0.5 bg-primary/20 rounded text-xs">
-          {sipStatus.active_calls} call{sipStatus.active_calls > 1 ? 's' : ''}
+          {effectiveStatus.active_calls} call{effectiveStatus.active_calls > 1 ? 's' : ''}
         </span>
       )}
     </div>
