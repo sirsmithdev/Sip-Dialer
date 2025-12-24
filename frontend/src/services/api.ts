@@ -499,4 +499,51 @@ export const emailSettingsApi = {
   },
 };
 
+// Reports API
+export interface RealTimeMetrics {
+  active_calls: number;
+  queued_calls: number;
+  calls_per_minute: number;
+  current_answer_rate: number;
+  line_utilization_percent: number;
+  active_campaigns_count: number;
+}
+
+export interface CallAnalytics {
+  calls_by_hour: Array<{
+    hour: number;
+    calls_count: number;
+    answered_count: number;
+  }>;
+  calls_by_day_of_week: Array<{
+    day_name: string;
+    count: number;
+  }>;
+  outcomes: Record<string, number>;
+  duration_stats: {
+    average_talk_seconds: number;
+    median_talk_seconds: number;
+    total_talk_time_hours: number;
+    longest_call_seconds: number;
+  };
+  amd_accuracy: Record<string, number>;
+  peak_performance_hour: number;
+}
+
+export const reportsApi = {
+  getRealTimeMetrics: async (): Promise<RealTimeMetrics> => {
+    const response = await api.get('/reports/real-time');
+    return response.data;
+  },
+
+  getCallAnalytics: async (params: {
+    date_from: string;
+    date_to: string;
+    campaign_id?: string;
+  }): Promise<CallAnalytics> => {
+    const response = await api.get('/reports/analytics', { params });
+    return response.data;
+  },
+};
+
 export default api;
