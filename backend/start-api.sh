@@ -19,4 +19,6 @@ fi
 echo "Starting uvicorn..."
 
 # Start the API server
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+# --proxy-headers: Trust X-Forwarded-* headers from reverse proxy (DigitalOcean App Platform)
+# --forwarded-allow-ips '*': Allow forwarded headers from any IP (required for cloud platforms)
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'

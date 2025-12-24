@@ -185,27 +185,27 @@ export const sipSettingsApi = {
 // Users API
 export const usersApi = {
   list: async (): Promise<User[]> => {
-    const response = await api.get('/users');
+    const response = await api.get('/users/');
     return response.data;
   },
 
   get: async (id: string): Promise<User> => {
-    const response = await api.get(`/users/${id}`);
+    const response = await api.get(`/users/${id}/`);
     return response.data;
   },
 
   create: async (user: Partial<User> & { password: string }): Promise<User> => {
-    const response = await api.post('/users', user);
+    const response = await api.post('/users/', user);
     return response.data;
   },
 
   update: async (id: string, user: Partial<User>): Promise<User> => {
-    const response = await api.patch(`/users/${id}`, user);
+    const response = await api.patch(`/users/${id}/`, user);
     return response.data;
   },
 
   delete: async (id: string): Promise<void> => {
-    await api.delete(`/users/${id}`);
+    await api.delete(`/users/${id}/`);
   },
 };
 
