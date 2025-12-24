@@ -33,11 +33,12 @@ def get_storage_service():
     """Get storage service instance."""
     from minio import Minio
 
+    # Support both S3_* (production) and MINIO_* (legacy) env vars
     return Minio(
-        endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
-        access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-        secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-        secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
+        endpoint=os.getenv("S3_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9000")),
+        access_key=os.getenv("S3_ACCESS_KEY", os.getenv("MINIO_ACCESS_KEY", "minioadmin")),
+        secret_key=os.getenv("S3_SECRET_KEY", os.getenv("MINIO_SECRET_KEY", "minioadmin")),
+        secure=os.getenv("S3_SECURE", os.getenv("MINIO_SECURE", "false")).lower() == "true",
     )
 
 
