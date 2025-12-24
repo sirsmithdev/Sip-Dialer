@@ -15,50 +15,56 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { contactsApi, audioApi } from '@/services/api';
-import type { CampaignCreate, CampaignUpdate, Campaign, DialingMode, AMDAction } from '@/types';
+import type { CampaignCreate, CampaignUpdate, Campaign, CampaignListItem, DialingMode, AMDAction } from '@/types';
 
 interface CampaignFormProps {
-  campaign?: Campaign;
+  campaign?: Campaign | CampaignListItem;
   onSubmit: (data: CampaignCreate | CampaignUpdate) => void;
   onCancel: () => void;
   isSubmitting?: boolean;
 }
 
+// Type guard to check if campaign is full Campaign type
+function isFullCampaign(c: Campaign | CampaignListItem): c is Campaign {
+  return 'contact_list_id' in c;
+}
+
 export function CampaignForm({ campaign, onSubmit, onCancel, isSubmitting }: CampaignFormProps) {
   const isEdit = !!campaign;
+  const fullCampaign = campaign && isFullCampaign(campaign) ? campaign : undefined;
 
   // Form state
   const [name, setName] = useState(campaign?.name || '');
   const [description, setDescription] = useState(campaign?.description || '');
-  const [contactListId, setContactListId] = useState(campaign?.contact_list_id || '');
-  const [ivrFlowId] = useState(campaign?.ivr_flow_id || '');
-  const [greetingAudioId, setGreetingAudioId] = useState(campaign?.greeting_audio_id || '');
-  const [voicemailAudioId, setVoicemailAudioId] = useState(campaign?.voicemail_audio_id || '');
+  const [contactListId, setContactListId] = useState(fullCampaign?.contact_list_id || '');
+  const [ivrFlowId] = useState(fullCampaign?.ivr_flow_id || '');
+  const [greetingAudioId, setGreetingAudioId] = useState(fullCampaign?.greeting_audio_id || '');
+  const [voicemailAudioId, setVoicemailAudioId] = useState(fullCampaign?.voicemail_audio_id || '');
 
   // Dialing settings
   const [dialingMode, setDialingMode] = useState<DialingMode>(campaign?.dialing_mode || 'progressive');
-  const [maxConcurrentCalls, setMaxConcurrentCalls] = useState(campaign?.max_concurrent_calls || 5);
-  const [callsPerMinute, setCallsPerMinute] = useState(campaign?.calls_per_minute || undefined);
+  const [maxConcurrentCalls, setMaxConcurrentCalls] = useState(fullCampaign?.max_concurrent_calls || 5);
+  const [callsPerMinute, setCallsPerMinute] = useState(fullCampaign?.calls_per_minute || undefined);
 
   // Retry settings
-  const [maxRetries, setMaxRetries] = useState(campaign?.max_retries || 2);
-  const [retryDelayMinutes, setRetryDelayMinutes] = useState(campaign?.retry_delay_minutes || 30);
-  const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(campaign?.retry_on_no_answer ?? true);
-  const [retryOnBusy, setRetryOnBusy] = useState(campaign?.retry_on_busy ?? true);
-  const [retryOnFailed, setRetryOnFailed] = useState(campaign?.retry_on_failed ?? false);
+  const [maxRetries, setMaxRetries] = useState(fullCampaign?.max_retries || 2);
+  const [retryDelayMinutes, setRetryDelayMinutes] = useState(fullCampaign?.retry_delay_minutes || 30);
+  const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(fullCampaign?.retry_on_no_answer ?? true);
+  const [retryOnBusy, setRetryOnBusy] = useState(fullCampaign?.retry_on_busy ?? true);
+  const [retryOnFailed, setRetryOnFailed] = useState(fullCampaign?.retry_on_failed ?? false);
 
   // Call timing
-  const [ringTimeoutSeconds, setRingTimeoutSeconds] = useState(campaign?.ring_timeout_seconds || 30);
+  const [ringTimeoutSeconds, setRingTimeoutSeconds] = useState(fullCampaign?.ring_timeout_seconds || 30);
 
   // AMD settings
-  const [amdEnabled, setAmdEnabled] = useState(campaign?.amd_enabled ?? true);
-  const [amdActionHuman, setAmdActionHuman] = useState<AMDAction>((campaign?.amd_action_human as AMDAction) || 'play_ivr');
-  const [amdActionMachine, setAmdActionMachine] = useState<AMDAction>((campaign?.amd_action_machine as AMDAction) || 'leave_message');
+  const [amdEnabled, setAmdEnabled] = useState(fullCampaign?.amd_enabled ?? true);
+  const [amdActionHuman, setAmdActionHuman] = useState<AMDAction>((fullCampaign?.amd_action_human as AMDAction) || 'play_ivr');
+  const [amdActionMachine, setAmdActionMachine] = useState<AMDAction>((fullCampaign?.amd_action_machine as AMDAction) || 'leave_message');
 
   // Calling hours
-  const [callingHoursStart, setCallingHoursStart] = useState(campaign?.calling_hours_start || '09:00');
-  const [callingHoursEnd, setCallingHoursEnd] = useState(campaign?.calling_hours_end || '21:00');
-  const [respectTimezone, setRespectTimezone] = useState(campaign?.respect_timezone ?? true);
+  const [callingHoursStart, setCallingHoursStart] = useState(fullCampaign?.calling_hours_start || '09:00');
+  const [callingHoursEnd, setCallingHoursEnd] = useState(fullCampaign?.calling_hours_end || '21:00');
+  const [respectTimezone, setRespectTimezone] = useState(fullCampaign?.respect_timezone ?? true);
 
   // Fetch contact lists
   const { data: contactListsData } = useQuery({

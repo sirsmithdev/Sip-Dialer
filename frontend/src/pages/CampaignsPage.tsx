@@ -120,7 +120,7 @@ export function CampaignsPage() {
           </div>
         </div>
         <CampaignForm
-          campaign={editingCampaign as any}
+          campaign={editingCampaign ?? undefined}
           onSubmit={handleUpdateSubmit}
           onCancel={() => {
             setViewMode('detail');

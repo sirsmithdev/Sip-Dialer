@@ -329,7 +329,11 @@ class ConcurrentCallManager:
                 await self._initiate_call(contact)
             except Exception as e:
                 logger.error(f"Failed to initiate call to {contact.phone_number}: {e}")
-                # Re-queue failed contact (will be handled by retry logic)
+                # Re-queue failed contact with a short delay for retry
+                contact.scheduled_at = datetime.utcnow() + timedelta(seconds=30)
+                async with self._lock:
+                    self.pending_contacts.append(contact)
+                logger.info(f"Re-queued contact {contact.phone_number} for retry in 30 seconds")
 
     async def _initiate_call(self, contact: PendingContact) -> None:
         """Initiate a single call."""

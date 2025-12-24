@@ -124,3 +124,88 @@ class DNCEntry(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<DNCEntry {self.phone_number}>"
+
+
+class DNCCheckLog(Base, UUIDMixin, TimestampMixin):
+    """Log of DNC checks performed for compliance tracking."""
+
+    __tablename__ = "dnc_check_logs"
+
+    # Organization
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+
+    # Campaign reference
+    campaign_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("campaigns.id"), nullable=True, index=True
+    )
+
+    # Phone number checked
+    phone_number: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+
+    # Contact reference (if available)
+    contact_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("contacts.id"), nullable=True
+    )
+
+    # Check result
+    is_on_dnc: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # DNC entry matched (if any)
+    dnc_entry_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("dnc_entries.id"), nullable=True
+    )
+
+    # Whether a call was blocked due to this check
+    call_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Source of check (dialer, api, manual)
+    check_source: Mapped[str] = mapped_column(String(50), default="dialer")
+
+    def __repr__(self) -> str:
+        return f"<DNCCheckLog {self.phone_number} on_dnc={self.is_on_dnc}>"
+
+
+class ComplianceViolation(Base, UUIDMixin, TimestampMixin):
+    """Record of compliance violations for audit purposes."""
+
+    __tablename__ = "compliance_violations"
+
+    # Organization
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+
+    # Campaign reference
+    campaign_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("campaigns.id"), nullable=True, index=True
+    )
+
+    # Call reference
+    call_log_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("call_logs.id"), nullable=True
+    )
+
+    # Contact phone
+    phone_number: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+
+    # Violation type: dnc_call, outside_hours, no_consent, etc.
+    violation_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+
+    # Description of violation
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Severity: low, medium, high, critical
+    severity: Mapped[str] = mapped_column(String(20), default="medium")
+
+    # Whether this has been reviewed
+    is_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed_by_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    review_notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    def __repr__(self) -> str:
+        return f"<ComplianceViolation {self.violation_type} {self.phone_number}>"

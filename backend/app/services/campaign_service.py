@@ -128,8 +128,8 @@ class CampaignService:
             retry_on_failed=data.retry_on_failed,
             ring_timeout_seconds=data.ring_timeout_seconds,
             amd_enabled=data.amd_enabled,
-            amd_action_human=data.amd_action_human.value,
-            amd_action_machine=data.amd_action_machine.value,
+            amd_action_human=data.amd_action_human.value if data.amd_action_human else None,
+            amd_action_machine=data.amd_action_machine.value if data.amd_action_machine else None,
             scheduled_start=data.scheduled_start,
             scheduled_end=data.scheduled_end,
             calling_hours_start=data.calling_hours_start,
@@ -228,7 +228,7 @@ class CampaignService:
         """Copy contacts from contact list to campaign contacts."""
         # Check if already populated
         existing_count = await db.execute(
-            select(func.count()).where(CampaignContact.campaign_id == campaign.id)
+            select(func.count(CampaignContact.id)).where(CampaignContact.campaign_id == campaign.id)
         )
         if existing_count.scalar() > 0:
             return 0

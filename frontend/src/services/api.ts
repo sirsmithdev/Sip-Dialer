@@ -83,11 +83,12 @@ api.interceptors.response.use(
 
           originalRequest.headers.Authorization = `Bearer ${access_token}`;
           return api(originalRequest);
-        } catch {
+        } catch (refreshError) {
           // Refresh failed, clear tokens and redirect to login
+          console.error('Token refresh failed:', refreshError);
           localStorage.removeItem('access_token');
           localStorage.removeItem('refresh_token');
-          window.location.href = '/login';
+          window.location.href = '/login?session=expired';
         }
       }
     }
