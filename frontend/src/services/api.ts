@@ -547,3 +547,4 @@ export const reportsApi = {
 };
 
 export default api;
+export { api };
