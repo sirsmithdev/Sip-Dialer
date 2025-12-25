@@ -46,8 +46,8 @@ export function TestCallSettings() {
     testCallMutation.mutate({
       phone_number: phoneNumber,
       caller_id: callerId || undefined,
-      audio_file: audioFileId || undefined,
-      voicemail_audio_file: voicemailAudioFileId || undefined,
+      audio_file: audioFileId && audioFileId !== 'none' ? audioFileId : undefined,
+      voicemail_audio_file: voicemailAudioFileId && voicemailAudioFileId !== 'none' ? voicemailAudioFileId : undefined,
     });
   };
 
@@ -206,7 +206,7 @@ export function TestCallSettings() {
                   <SelectValue placeholder="Select audio file..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No audio (silence)</SelectItem>
+                  <SelectItem value="none">No audio (silence)</SelectItem>
                   {activeAudioFiles.map((file: AudioFile) => (
                     <SelectItem key={file.id} value={file.id}>
                       {file.name}
@@ -239,7 +239,7 @@ export function TestCallSettings() {
                   <SelectValue placeholder="Select audio file..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No audio (hang up)</SelectItem>
+                  <SelectItem value="none">No audio (hang up)</SelectItem>
                   {activeAudioFiles.map((file: AudioFile) => (
                     <SelectItem key={file.id} value={file.id}>
                       {file.name}
