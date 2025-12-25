@@ -8,6 +8,7 @@ import {
   GitBranch,
   LogOut,
   ChevronRight,
+  Bot,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -26,6 +27,7 @@ const navigation: NavItem[] = [
   { name: 'Campaigns', href: '/campaigns', icon: Phone, description: 'Manage campaigns' },
   { name: 'Contacts', href: '/contacts', icon: Users, description: 'Contact lists' },
   { name: 'IVR Builder', href: '/ivr', icon: GitBranch, description: 'Voice flows', permission: 'ivr.access' },
+  { name: 'Voice Agent', href: '/voice-agent', icon: Bot, description: 'AI Inbound', permission: 'voice_agent.access' },
   { name: 'Audio Files', href: '/audio', icon: Music, description: 'Voice prompts', permission: 'audio.access' },
   { name: 'Settings', href: '/settings', icon: Settings, description: 'Configuration', permission: 'settings.access' },
 ];
