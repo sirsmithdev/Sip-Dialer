@@ -89,7 +89,7 @@ async def create_voice_agent(
         llm_max_tokens=data.llm_max_tokens,
         plugins_config=data.plugins_config,
         default_transfer_extension=data.default_transfer_extension,
-        status=VoiceAgentStatus.DRAFT
+        status=VoiceAgentStatus.DRAFT.value
     )
 
     db.add(agent)
@@ -145,8 +145,9 @@ async def update_voice_agent(
     # Update fields
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
+        # Status is stored as string, so validate but keep as string
         if field == "status" and value:
-            value = VoiceAgentStatus(value)
+            VoiceAgentStatus(value)  # Validate it's a valid status
         setattr(agent, field, value)
 
     await db.commit()
@@ -199,7 +200,7 @@ async def activate_voice_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Voice agent not found")
 
-    agent.status = VoiceAgentStatus.ACTIVE
+    agent.status = VoiceAgentStatus.ACTIVE.value
     await db.commit()
     await db.refresh(agent)
     return agent
@@ -225,7 +226,7 @@ async def deactivate_voice_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Voice agent not found")
 
-    agent.status = VoiceAgentStatus.INACTIVE
+    agent.status = VoiceAgentStatus.INACTIVE.value
     await db.commit()
     await db.refresh(agent)
     return agent
