@@ -207,7 +207,8 @@ async def get_dialer_status(
 async def make_test_call(
     phone_number: str = Query(..., description="Phone number to call"),
     caller_id: Optional[str] = Query(None, description="Caller ID to use"),
-    audio_file: Optional[str] = Query(None, description="Audio file ID to play"),
+    audio_file: Optional[str] = Query(None, description="Audio file ID to play for human answer"),
+    voicemail_audio_file: Optional[str] = Query(None, description="Audio file ID to play for voicemail"),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.MANAGER))
 ):
     """
@@ -254,7 +255,8 @@ async def make_test_call(
         call_request = {
             "destination": phone_number,
             "caller_id": caller_id or "",
-            "audio_file": audio_file
+            "audio_file": audio_file,
+            "voicemail_audio_file": voicemail_audio_file
         }
         await r.publish("dialer:test_call", json.dumps(call_request))
 
