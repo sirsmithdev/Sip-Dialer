@@ -165,12 +165,12 @@ export function CampaignForm({ campaign, onSubmit, onCancel, isSubmitting }: Cam
 
               <div className="space-y-2">
                 <Label htmlFor="greeting-audio">Greeting Audio</Label>
-                <Select value={greetingAudioId} onValueChange={setGreetingAudioId}>
+                <Select value={greetingAudioId || "none"} onValueChange={(v) => setGreetingAudioId(v === "none" ? "" : v)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select greeting audio (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {audioFilesData?.items
                       .filter((a) => a.status === 'ready')
                       .map((audio) => (
@@ -184,12 +184,12 @@ export function CampaignForm({ campaign, onSubmit, onCancel, isSubmitting }: Cam
 
               <div className="space-y-2">
                 <Label htmlFor="voicemail-audio">Voicemail Audio</Label>
-                <Select value={voicemailAudioId} onValueChange={setVoicemailAudioId}>
+                <Select value={voicemailAudioId || "none"} onValueChange={(v) => setVoicemailAudioId(v === "none" ? "" : v)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select voicemail audio (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {audioFilesData?.items
                       .filter((a) => a.status === 'ready')
                       .map((audio) => (
