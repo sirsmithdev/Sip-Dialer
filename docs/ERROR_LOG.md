@@ -172,6 +172,63 @@ Two migration files have the same revision number or conflicting `down_revision`
 
 ---
 
+### ERR-005: FastAPI Route Ordering (Static vs Parameterized)
+
+**Date**: 2025-12-25
+
+**Symptoms**:
+- API returns 404 for valid static paths like `/routes`, `/stats`, `/conversations`
+- Error in browser: `GET /api/v1/voice-agents/routes 404 (Not Found)`
+- Routes work when accessed with explicit IDs but fail for static paths
+
+**Root Cause**:
+FastAPI matches routes in definition order. If a parameterized route like `/{agent_id}` is defined before static routes like `/routes`, the static path will be treated as a parameter value.
+
+Example: `/voice-agents/routes` matches `/{agent_id}` with `agent_id="routes"`, returning 404 because no agent with ID "routes" exists.
+
+**Files Affected**:
+- `backend/app/api/v1/endpoints/voice_agent.py`
+
+**Bad Code**:
+```python
+router = APIRouter(prefix="/voice-agents")
+
+@router.get("/{agent_id}")  # This catches EVERYTHING, including /routes
+async def get_voice_agent(agent_id: str): ...
+
+@router.get("/routes")  # This is NEVER reached!
+async def list_routes(): ...
+```
+
+**Solution**:
+Define static paths BEFORE parameterized paths:
+
+```python
+router = APIRouter(prefix="/voice-agents")
+
+# Static paths FIRST
+@router.get("/routes")
+async def list_routes(): ...
+
+@router.get("/stats")
+async def get_stats(): ...
+
+@router.get("/conversations")
+async def list_conversations(): ...
+
+# Parameterized paths LAST
+@router.get("/{agent_id}")
+async def get_voice_agent(agent_id: str): ...
+```
+
+**Prevention**:
+- Always define static routes before parameterized routes in the same router
+- Add a comment at the top of files with this pattern as a reminder
+- Consider using more specific path prefixes (e.g., `/agent/{id}` instead of `/{id}`)
+- Test all static endpoints after adding new parameterized routes
+
+---
+
 ## Quick Diagnosis Checklist
 
 ### API Returns 500
@@ -189,6 +246,13 @@ Two migration files have the same revision number or conflicting `down_revision`
    - Missing required props
    - API data shape mismatch
    - Uncaught Promise rejection
+
+### API Returns 404 (Unexpected)
+1. Check route ordering in endpoint file
+2. Common causes:
+   - Static path defined after parameterized path (see ERR-005)
+   - Missing router include in main router
+   - Incorrect path prefix
 
 ### Database Migration Fails
 1. Check Alembic output
