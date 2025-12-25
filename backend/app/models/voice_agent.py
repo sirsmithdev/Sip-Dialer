@@ -4,8 +4,7 @@ Voice Agent models for AI-powered inbound call handling.
 from datetime import datetime
 from typing import Optional, List, TYPE_CHECKING
 from sqlalchemy import (
-    String, Boolean, ForeignKey, Text, Integer, JSON,
-    Enum as SQLEnum, Float
+    String, Boolean, ForeignKey, Text, Integer, JSON, Float
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
@@ -47,9 +46,9 @@ class VoiceAgentConfig(Base, UUIDMixin, TimestampMixin):
     )
     organization: Mapped["Organization"] = relationship("Organization")
 
-    # Status
-    status: Mapped[VoiceAgentStatus] = mapped_column(
-        SQLEnum(VoiceAgentStatus), default=VoiceAgentStatus.DRAFT
+    # Status (stored as string in DB, validated as enum in Python)
+    status: Mapped[str] = mapped_column(
+        String(20), default=VoiceAgentStatus.DRAFT.value
     )
 
     # OpenAI API settings (encrypted key stored separately or in env)
@@ -194,9 +193,9 @@ class VoiceAgentConversation(Base, UUIDMixin, TimestampMixin):
     # Detected intent/topic
     detected_intent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    # Outcome
-    resolution_status: Mapped[ResolutionStatus] = mapped_column(
-        SQLEnum(ResolutionStatus), default=ResolutionStatus.RESOLVED
+    # Outcome (stored as string in DB, validated as enum in Python)
+    resolution_status: Mapped[str] = mapped_column(
+        String(50), default=ResolutionStatus.RESOLVED.value
     )
     transfer_destination: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     transfer_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
