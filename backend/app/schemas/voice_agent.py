@@ -149,7 +149,7 @@ class VoiceAgentConversationResponse(BaseModel):
     call_duration_seconds: int
     started_at: datetime
     ended_at: Optional[datetime]
-    transcript: List[TranscriptEntry]
+    transcript: List[Dict[str, Any]]
     turn_count: int
     summary: Optional[str]
     sentiment: Optional[str]
