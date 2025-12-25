@@ -12,6 +12,13 @@ from app.models.sip_settings import SIPSettings, SIPTransport, ConnectionStatus
 from app.models.report import ReportSchedule, ReportExecution
 from app.models.email_settings import EmailSettings
 from app.models.email_log import EmailLog, EmailType, EmailStatus
+from app.models.voice_agent import (
+    VoiceAgentConfig,
+    VoiceAgentStatus,
+    InboundRoute,
+    VoiceAgentConversation,
+    ResolutionStatus,
+)
 
 __all__ = [
     "User",
@@ -35,4 +42,10 @@ __all__ = [
     "EmailLog",
     "EmailType",
     "EmailStatus",
+    # Voice Agent models
+    "VoiceAgentConfig",
+    "VoiceAgentStatus",
+    "InboundRoute",
+    "VoiceAgentConversation",
+    "ResolutionStatus",
 ]

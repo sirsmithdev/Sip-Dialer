@@ -12,6 +12,8 @@ export type Permission =
   | 'contacts.import'
   | 'contacts.delete'
   | 'ivr.access'
+  | 'voice_agent.access'
+  | 'voice_agent.edit'
   | 'audio.access'
   | 'audio.upload'
   | 'audio.delete'
@@ -28,6 +30,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'contacts.import',
     'contacts.delete',
     'ivr.access',
+    'voice_agent.access',
+    'voice_agent.edit',
     'audio.access',
     'audio.upload',
     'audio.delete',
@@ -40,6 +44,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'campaigns.control',
     'contacts.import',
     'ivr.access',
+    'voice_agent.access',
+    'voice_agent.edit',
     'audio.access',
     'audio.upload',
     'settings.access',

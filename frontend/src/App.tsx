@@ -12,6 +12,7 @@ import { ContactsPage } from '@/pages/ContactsPage';
 import { CampaignsPage } from '@/pages/CampaignsPage';
 import { IvrBuilderPage } from '@/pages/IvrBuilderPage';
 import { AudioFilesPage } from '@/pages/AudioFilesPage';
+import { VoiceAgentPage } from '@/pages/VoiceAgentPage';
 
 export function App() {
   const { fetchUser } = useAuth();
@@ -45,6 +46,14 @@ export function App() {
               element={
                 <ProtectedRoute permission="ivr.access">
                   <IvrBuilderPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="voice-agent"
+              element={
+                <ProtectedRoute permission="voice_agent.access">
+                  <VoiceAgentPage />
                 </ProtectedRoute>
               }
             />
