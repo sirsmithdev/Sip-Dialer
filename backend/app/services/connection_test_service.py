@@ -42,12 +42,25 @@ class ConnectionTestService:
         self._redis_client = None
 
     def _get_redis_client(self):
-        """Get Redis client for checking dialer status."""
+        """Get Redis client for checking dialer status (with SSL support for DO Managed Redis)."""
         if self._redis_client is None:
-            self._redis_client = redis.Redis.from_url(
-                app_settings.redis_url,
-                decode_responses=True
-            )
+            redis_url = app_settings.redis_url
+            if redis_url.startswith("rediss://"):
+                # DigitalOcean Managed Redis uses self-signed certs
+                self._redis_client = redis.Redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    ssl_cert_reqs=None,  # Disable cert verification for DO
+                    socket_keepalive=True,
+                    health_check_interval=30
+                )
+            else:
+                self._redis_client = redis.Redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_keepalive=True,
+                    health_check_interval=30
+                )
         return self._redis_client
 
     def _get_dialer_status(self) -> Optional[dict]:

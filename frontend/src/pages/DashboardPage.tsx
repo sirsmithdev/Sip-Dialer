@@ -28,23 +28,31 @@ function SIPStatusIndicator() {
   const sipStatus = useSIPStatus();
   const { isConnected: wsConnected } = useWebSocketContext();
 
+  // Check if WebSocket status is stale (over 60 seconds old)
+  const isStatusStale = sipStatus?.last_updated
+    ? new Date().getTime() - new Date(sipStatus.last_updated).getTime() > 60000
+    : true;
+
+  // Determine if we need to poll for status
+  const needsPolling = !sipStatus || sipStatus.status === 'unknown' || isStatusStale;
+
   // Fallback: Query SIP settings from database when WebSocket status is unavailable
   const { data: sipSettings, isLoading: settingsLoading } = useQuery({
     queryKey: ['sip-settings-status'],
     queryFn: sipSettingsApi.get,
-    enabled: !sipStatus, // Only fetch when we don't have WebSocket status
+    enabled: needsPolling,
     staleTime: 30000, // Cache for 30 seconds
     retry: 1,
   });
 
-  // Also try to get real-time dialer status as fallback
+  // Also try to get real-time dialer status as fallback (more frequent when WS unavailable)
   const { data: dialerStatus, isLoading: dialerLoading } = useQuery({
     queryKey: ['dialer-status'],
     queryFn: sipSettingsApi.getDialerStatus,
-    enabled: !sipStatus, // Only fetch when we don't have WebSocket status
-    staleTime: 10000, // Cache for 10 seconds
-    refetchInterval: 30000, // Poll every 30 seconds
-    retry: 1,
+    enabled: needsPolling,
+    staleTime: 5000, // Cache for 5 seconds only
+    refetchInterval: needsPolling ? 10000 : 30000, // Poll every 10s when needed, 30s otherwise
+    retry: 2,
   });
 
   // Determine the effective status to display

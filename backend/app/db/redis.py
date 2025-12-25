@@ -27,6 +27,8 @@ async def get_redis() -> Redis:
                 encoding="utf-8",
                 decode_responses=True,
                 ssl_cert_reqs=None,  # Disable certificate verification
+                socket_keepalive=True,
+                health_check_interval=30,  # Ping every 30s to prevent idle timeout
             )
         else:
             # Local/non-SSL Redis
@@ -34,6 +36,8 @@ async def get_redis() -> Redis:
                 redis_url,
                 encoding="utf-8",
                 decode_responses=True,
+                socket_keepalive=True,
+                health_check_interval=30,
             )
     return _redis_client
 

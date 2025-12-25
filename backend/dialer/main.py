@@ -174,10 +174,18 @@ class DialerEngine:
                 self.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
-                ssl_cert_reqs=None  # Disable cert verification for DO
+                ssl_cert_reqs=None,  # Disable cert verification for DO
+                socket_keepalive=True,
+                health_check_interval=30  # Ping every 30 seconds to prevent idle timeout
             )
         else:
-            return redis.from_url(self.redis_url, encoding="utf-8", decode_responses=True)
+            return redis.from_url(
+                self.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_keepalive=True,
+                health_check_interval=30
+            )
 
     def _get_async_db_url_and_connect_args(self):
         """Get async database URL and connect_args with SSL support for DO."""
@@ -1083,19 +1091,44 @@ class DialerEngine:
         except Exception as e:
             logger.error(f"Failed to publish call manager status: {e}")
 
+    async def _redis_keepalive(self, redis_client, stop_event: asyncio.Event):
+        """Send periodic pings to keep Redis connection alive."""
+        while not stop_event.is_set():
+            try:
+                await asyncio.sleep(60)  # Ping every 60 seconds
+                if not stop_event.is_set():
+                    await redis_client.ping()
+                    logger.debug("Redis keepalive ping successful")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Redis keepalive ping failed: {e}")
+                break
+
     async def _listen_for_test_calls(self):
-        """Listen for test call requests via Redis with automatic reconnection."""
+        """Listen for test call requests via Redis with automatic reconnection and keepalive."""
         import json
 
         while self.running:
             r = None
             pubsub = None
+            keepalive_task = None
+            stop_event = asyncio.Event()
+
             try:
                 logger.info(f"Connecting to Redis for test calls: {self.redis_url}")
                 r = self._get_redis_client()
+
+                # Test connection first
+                await r.ping()
+                logger.info("Redis connection established")
+
                 pubsub = r.pubsub()
                 await pubsub.subscribe("dialer:test_call")
                 logger.info("Listening for test calls on Redis channel: dialer:test_call")
+
+                # Start keepalive task to prevent idle timeout
+                keepalive_task = asyncio.create_task(self._redis_keepalive(r, stop_event))
 
                 async for message in pubsub.listen():
                     if not self.running:
@@ -1136,9 +1169,20 @@ class DialerEngine:
                 logger.info("Test call listener cancelled")
                 break
             except Exception as e:
-                logger.error(f"Redis listener error: {e}. Reconnecting in 5 seconds...")
+                logger.error(f"Redis subscriber error: {e}. Reconnecting in 5 seconds...")
                 await asyncio.sleep(5)
             finally:
+                # Signal keepalive to stop
+                stop_event.set()
+
+                # Cancel keepalive task
+                if keepalive_task:
+                    keepalive_task.cancel()
+                    try:
+                        await keepalive_task
+                    except asyncio.CancelledError:
+                        pass
+
                 # Clean up connections - use aclose() for async Redis clients
                 try:
                     if pubsub:

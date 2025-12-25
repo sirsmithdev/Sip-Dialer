@@ -9,6 +9,7 @@ This document tracks errors encountered during development and deployment, along
 2. [Frontend/React Errors](#frontendreact-errors)
 3. [API Errors](#api-errors)
 4. [Deployment Errors](#deployment-errors)
+5. [Redis/Connection Errors](#redisconnection-errors)
 
 ---
 
@@ -260,6 +261,74 @@ async def get_voice_agent(agent_id: str): ...
    - Duplicate revision (see ERR-004)
    - Column already exists
    - Foreign key constraint violation
+
+### Redis/Pub-Sub Connection Issues
+1. Check dialer-engine logs for "Connection closed by server"
+2. Common causes:
+   - Missing keepalive configuration (see ERR-006)
+   - SSL certificate verification issues with DO Managed Redis
+   - Idle timeout from managed Redis service
+
+### SIP Status Not Updating
+1. Check if dialer is registered (logs show "SIP registration successful")
+2. Check Redis connection (pub/sub might be dropping)
+3. Check WebSocket connection in browser console
+4. Fallback: Dashboard polls `/settings/dialer/status` every 10-30 seconds
+
+---
+
+## Redis/Connection Errors
+
+### ERR-006: DigitalOcean Managed Redis Connection Drops
+
+**Date**: 2025-12-25
+
+**Symptoms**:
+- Redis pubsub listener disconnects every ~5 minutes
+- Logs show: "Connection closed by server.. Reconnecting in 5 seconds..."
+- Dashboard SIP status not updating
+- SIP test may fail even when dialer is registered
+
+**Root Cause**:
+DigitalOcean Managed Redis has an idle connection timeout (~5 minutes). When using pub/sub, if no messages are published for this period, the connection appears idle and gets terminated.
+
+**Files Affected**:
+- `backend/dialer/main.py`
+- `backend/app/db/redis.py`
+- `backend/app/services/connection_test_service.py`
+
+**Bad Code**:
+```python
+# Redis client without keepalive
+redis.from_url(redis_url, decode_responses=True)
+```
+
+**Solution**:
+Add `socket_keepalive=True` and `health_check_interval=30` to all Redis clients:
+
+```python
+# Redis client with keepalive (prevents idle timeout)
+redis.from_url(
+    redis_url,
+    decode_responses=True,
+    socket_keepalive=True,
+    health_check_interval=30  # Ping every 30 seconds
+)
+```
+
+For pub/sub listeners, also add a concurrent keepalive task:
+```python
+async def _redis_keepalive(self, redis_client, stop_event):
+    while not stop_event.is_set():
+        await asyncio.sleep(60)
+        if not stop_event.is_set():
+            await redis_client.ping()
+```
+
+**Prevention**:
+- Always use `socket_keepalive=True` for Redis connections
+- Always use `health_check_interval=30` for production
+- For SSL Redis (`rediss://`), also add `ssl_cert_reqs=None` for DO Managed Redis
 
 ---
 
