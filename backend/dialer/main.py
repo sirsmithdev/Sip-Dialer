@@ -7,6 +7,11 @@ by connecting directly as a PJSIP extension to the UCM6302/PBX.
 The dialer acts like a SIP handset - it registers with the PBX,
 maintains persistent connection, handles both inbound and outbound calls.
 
+Version: 2.2.0 - Database connection pooling & improved logging (2025-12-26)
+  - Added shared database connection pool to prevent connection exhaustion
+  - Changed keepalive logs from DEBUG to INFO for visibility
+  - Added periodic heartbeat status logging (every minute)
+
 Version: 2.1.0 - Full SIP handset mode with inbound call handling (2025-12-25)
   - Added inbound call handling via PJSUA2 onIncomingCall callback
   - Added SIP heartbeat task for continuous status publishing
@@ -117,6 +122,10 @@ class DialerEngine:
             "DATABASE_URL",
             "postgresql+asyncpg://autodialer:autodialer_secret@localhost:5432/autodialer"
         )
+
+        # Shared database engine (created lazily with connection pooling)
+        self._db_engine = None
+        self._async_session_factory = None
 
         # Local SIP port (different from UCM's 5060)
         self.local_sip_port = int(os.getenv("LOCAL_SIP_PORT", "5061"))
@@ -230,30 +239,67 @@ class DialerEngine:
 
         return db_url, connect_args
 
-    async def _get_sip_settings(self) -> Optional[SIPSettings]:
-        """Load SIP settings from database."""
-        db_url, connect_args = self._get_async_db_url_and_connect_args()
-        engine = create_async_engine(db_url, connect_args=connect_args)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async def _get_db_session(self):
+        """
+        Get a database session from the shared connection pool.
 
-        async with async_session() as session:
-            result = await session.execute(
-                select(SIPSettings).where(SIPSettings.is_active == True).limit(1)
+        Uses connection pooling to prevent exhaustion:
+        - pool_size=5: Base connections kept open
+        - max_overflow=10: Extra connections allowed during peak
+        - pool_timeout=30: Wait time for available connection
+        - pool_recycle=1800: Recycle connections every 30 minutes
+        """
+        if self._db_engine is None:
+            db_url, connect_args = self._get_async_db_url_and_connect_args()
+            self._db_engine = create_async_engine(
+                db_url,
+                connect_args=connect_args,
+                pool_size=5,
+                max_overflow=10,
+                pool_timeout=30,
+                pool_recycle=1800,
+                pool_pre_ping=True,  # Verify connections before use
+                echo=False
             )
-            settings = result.scalar_one_or_none()
+            self._async_session_factory = sessionmaker(
+                self._db_engine,
+                class_=AsyncSession,
+                expire_on_commit=False
+            )
+            logger.info("Database connection pool initialized (pool_size=5, max_overflow=10)")
 
-            if settings:
-                # Decrypt password
-                try:
-                    from app.core.security import decrypt_value
-                    settings._decrypted_password = decrypt_value(settings.sip_password_encrypted)
-                except Exception as e:
-                    logger.error(f"Failed to decrypt SIP password: {e}")
-                    settings._decrypted_password = ""
+        return self._async_session_factory()
 
-            return settings
+    async def _close_db_engine(self):
+        """Close the shared database engine."""
+        if self._db_engine is not None:
+            await self._db_engine.dispose()
+            self._db_engine = None
+            self._async_session_factory = None
+            logger.info("Database connection pool closed")
 
-        await engine.dispose()
+    async def _get_sip_settings(self) -> Optional[SIPSettings]:
+        """Load SIP settings from database using shared connection pool."""
+        try:
+            async with await self._get_db_session() as session:
+                result = await session.execute(
+                    select(SIPSettings).where(SIPSettings.is_active == True).limit(1)
+                )
+                settings = result.scalar_one_or_none()
+
+                if settings:
+                    # Decrypt password
+                    try:
+                        from app.core.security import decrypt_value
+                        settings._decrypted_password = decrypt_value(settings.sip_password_encrypted)
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt SIP password: {e}")
+                        settings._decrypted_password = ""
+
+                return settings
+        except Exception as e:
+            logger.error(f"Error getting SIP settings: {e}")
+            return None
 
     def _get_s3_client(self):
         """Get or create S3 client (supports MinIO, DO Spaces, AWS S3)."""
@@ -375,7 +421,7 @@ class DialerEngine:
     async def start(self):
         """Start the dialer engine."""
         self.running = True
-        logger.info("Starting Dialer Engine v2.1.0 (SIP Handset Mode - Inbound/Outbound)...")
+        logger.info("Starting Dialer Engine v2.2.0 (SIP Handset Mode - DB Pooling + Improved Logging)...")
 
         # Check if SIP engine is available
         if not SIP_ENGINE_AVAILABLE:
@@ -526,11 +572,7 @@ class DialerEngine:
         server = None
 
         try:
-            db_url, connect_args = self._get_async_db_url_and_connect_args()
-            engine = create_async_engine(db_url, connect_args=connect_args)
-            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-            async with async_session() as session:
+            async with await self._get_db_session() as session:
                 result = await session.execute(
                     select(SIPSettings).where(SIPSettings.is_active == True).limit(1)
                 )
@@ -549,8 +591,6 @@ class DialerEngine:
                         settings.last_error = None
 
                     await session.commit()
-
-            await engine.dispose()
         except Exception as e:
             logger.error(f"Failed to update connection status: {e}")
 
@@ -669,13 +709,9 @@ class DialerEngine:
                 await asyncio.sleep(5)
 
     async def _process_active_campaigns(self):
-        """Query and process all active campaigns."""
-        db_url, connect_args = self._get_async_db_url_and_connect_args()
-        engine = create_async_engine(db_url, connect_args=connect_args)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
+        """Query and process all active campaigns using shared connection pool."""
         try:
-            async with async_session() as session:
+            async with await self._get_db_session() as session:
                 # Get all running campaigns
                 # Use text() cast to avoid asyncpg enum type issues when enum doesn't exist
                 # This works whether the column is VARCHAR or ENUM
@@ -693,8 +729,6 @@ class DialerEngine:
             logger.error(f"Error querying campaigns: {e}")
             import traceback
             traceback.print_exc()
-        finally:
-            await engine.dispose()
 
     async def _process_single_campaign(self, session: AsyncSession, campaign: Campaign):
         """Process a single campaign - fetch contacts and queue calls."""
@@ -958,15 +992,11 @@ class DialerEngine:
         state,
         call: "SIPCall"
     ):
-        """Update the campaign contact with call result."""
+        """Update the campaign contact with call result using shared connection pool."""
         from sqlalchemy import update
 
-        db_url, connect_args = self._get_async_db_url_and_connect_args()
-        engine = create_async_engine(db_url, connect_args=connect_args)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
         try:
-            async with async_session() as session:
+            async with await self._get_db_session() as session:
                 # Get campaign contact and campaign info
                 result = await session.execute(
                     select(CampaignContact)
@@ -1061,8 +1091,6 @@ class DialerEngine:
             logger.error(f"Error updating call result: {e}")
             import traceback
             traceback.print_exc()
-        finally:
-            await engine.dispose()
 
     async def _publish_campaign_event(self, campaign_id: str, event_type: str):
         """Publish campaign event to Redis for WebSocket clients."""
@@ -1121,6 +1149,7 @@ class DialerEngine:
 
         failed_count = 0
         last_registered = False
+        heartbeat_count = 0
 
         while self.running:
             try:
@@ -1169,9 +1198,14 @@ class DialerEngine:
                                 logger.error(f"Re-registration failed: {e}")
 
                     last_registered = is_registered
+                    heartbeat_count += 1
 
                     # Always publish status for real-time updates
                     await self._publish_sip_heartbeat(status, active_calls)
+
+                    # Log heartbeat status every minute (12 iterations at 5s interval)
+                    if heartbeat_count % 12 == 0:
+                        logger.info(f"SIP heartbeat #{heartbeat_count}: status={status}, active_calls={active_calls}")
 
                 await asyncio.sleep(self.sip_heartbeat_interval)
 
@@ -1320,15 +1354,11 @@ class DialerEngine:
         return sip_uri
 
     async def _get_voice_agent_for_did(self, did_number: str) -> Optional[Dict]:
-        """Look up voice agent configuration for a DID number."""
+        """Look up voice agent configuration for a DID number using shared connection pool."""
         from sqlalchemy import select, and_
 
-        db_url, connect_args = self._get_async_db_url_and_connect_args()
-        engine = create_async_engine(db_url, connect_args=connect_args)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
         try:
-            async with async_session() as session:
+            async with await self._get_db_session() as session:
                 # Import models here to avoid circular imports
                 from app.models.voice_agent import InboundRoute, VoiceAgentConfig
 
@@ -1367,8 +1397,6 @@ class DialerEngine:
         except Exception as e:
             logger.error(f"Error looking up voice agent: {e}")
             return None
-        finally:
-            await engine.dispose()
 
     async def _execute_voice_agent_session(self, call, agent_config: Dict, caller_number: str):
         """Execute a voice agent conversation session."""
@@ -1424,12 +1452,15 @@ class DialerEngine:
 
     async def _redis_keepalive(self, redis_client, stop_event: asyncio.Event):
         """Send periodic pings to keep Redis connection alive."""
+        ping_count = 0
         while not stop_event.is_set():
             try:
                 await asyncio.sleep(60)  # Ping every 60 seconds
                 if not stop_event.is_set():
                     await redis_client.ping()
-                    logger.debug("Redis keepalive ping successful")
+                    ping_count += 1
+                    # Log every ping at INFO level for visibility
+                    logger.info(f"Redis keepalive ping #{ping_count} successful")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1694,7 +1725,7 @@ class DialerEngine:
         ivr_flow_definition: Dict
     ):
         """
-        Save IVR execution results to database.
+        Save IVR execution results to database using shared connection pool.
 
         This saves:
         1. Updates CallLog with IVR completion status and DTMF inputs
@@ -1703,12 +1734,8 @@ class DialerEngine:
         from sqlalchemy import update
         import uuid
 
-        db_url, connect_args = self._get_async_db_url_and_connect_args()
-        engine = create_async_engine(db_url, connect_args=connect_args)
-        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
         try:
-            async with async_session() as session:
+            async with await self._get_db_session() as session:
                 # Get IVR flow info
                 ivr_flow_id = ivr_flow_definition.get("flow_id")
                 ivr_flow_version = ivr_flow_definition.get("version", 1)
@@ -1862,8 +1889,6 @@ class DialerEngine:
 
         except Exception as e:
             logger.error(f"Failed to save IVR results: {e}")
-        finally:
-            await engine.dispose()
 
     async def hangup_call(self, call_id: str):
         """Hang up a call by ID."""
@@ -1901,6 +1926,9 @@ class DialerEngine:
         if self.sip_engine:
             self.sip_engine.shutdown()
             self.sip_engine = None
+
+        # Close database connection pool
+        await self._close_db_engine()
 
         # Update status
         await self._update_connection_status("DISCONNECTED")
