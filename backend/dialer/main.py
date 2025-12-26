@@ -4,10 +4,14 @@ Dialer Engine Main Entry Point.
 This module starts the dialer engine that manages outbound calls
 by connecting directly as a PJSIP extension to the UCM6302/PBX.
 
-The dialer acts like a SIP softphone - it registers with the PBX,
-then originates calls using SIP INVITE with full RTP media support.
+The dialer acts like a SIP handset - it registers with the PBX,
+maintains persistent connection, handles both inbound and outbound calls.
 
-Version: 2.0.3 - Add task references to prevent GC during shutdown (2025-12-22)
+Version: 2.1.0 - Full SIP handset mode with inbound call handling (2025-12-25)
+  - Added inbound call handling via PJSUA2 onIncomingCall callback
+  - Added SIP heartbeat task for continuous status publishing
+  - Added automatic re-registration on connection loss
+  - Integrated with voice agent for inbound call routing
 """
 import asyncio
 import logging
@@ -149,6 +153,10 @@ class DialerEngine:
         # Background task references (prevents garbage collection)
         self._test_call_listener_task: Optional[asyncio.Task] = None
         self._call_monitor_task: Optional[asyncio.Task] = None
+        self._sip_heartbeat_task: Optional[asyncio.Task] = None
+
+        # SIP status heartbeat interval (seconds)
+        self.sip_heartbeat_interval = float(os.getenv("SIP_HEARTBEAT_INTERVAL", "5.0"))
 
     def _task_done_callback(self, task: asyncio.Task):
         """Callback for when a background task completes or fails."""
@@ -367,7 +375,7 @@ class DialerEngine:
     async def start(self):
         """Start the dialer engine."""
         self.running = True
-        logger.info("Starting Dialer Engine v2.1.0 (PJSUA2 SIP Mode with SRTP support)...")
+        logger.info("Starting Dialer Engine v2.1.0 (SIP Handset Mode - Inbound/Outbound)...")
 
         # Check if SIP engine is available
         if not SIP_ENGINE_AVAILABLE:
@@ -623,6 +631,15 @@ class DialerEngine:
         # Start call monitor task (keep reference to prevent GC)
         self._call_monitor_task = asyncio.create_task(self._monitor_active_calls())
         self._call_monitor_task.add_done_callback(self._task_done_callback)
+
+        # Start SIP heartbeat task for continuous status updates (handset mode)
+        self._sip_heartbeat_task = asyncio.create_task(self._sip_heartbeat_loop())
+        self._sip_heartbeat_task.add_done_callback(self._task_done_callback)
+
+        # Set up inbound call handler
+        if self.sip_engine:
+            self.sip_engine.set_inbound_call_handler(self._handle_inbound_call)
+            logger.info("Inbound call handler configured - ready to receive calls")
 
         status_publish_counter = 0
         while self.running:
@@ -1091,6 +1108,320 @@ class DialerEngine:
         except Exception as e:
             logger.error(f"Failed to publish call manager status: {e}")
 
+    async def _sip_heartbeat_loop(self):
+        """
+        Continuous SIP status heartbeat - acts like a SIP handset.
+
+        This task:
+        1. Publishes SIP status every 5 seconds for real-time UI updates
+        2. Monitors registration state and attempts re-registration if needed
+        3. Keeps the connection alive by periodically checking state
+        """
+        logger.info(f"Starting SIP heartbeat loop (interval: {self.sip_heartbeat_interval}s)")
+
+        failed_count = 0
+        last_registered = False
+
+        while self.running:
+            try:
+                if self.sip_engine:
+                    is_registered = self.sip_engine.is_registered
+                    active_calls = len(self.active_calls)
+
+                    # Publish current status
+                    if is_registered:
+                        status = "registered"
+                        failed_count = 0
+
+                        if not last_registered:
+                            logger.info("SIP registration restored")
+                            await self._update_connection_status("REGISTERED")
+                    else:
+                        reg_state = self.sip_engine.registration_state
+                        if reg_state == RegistrationState.REGISTERING:
+                            status = "connecting"
+                        elif reg_state == RegistrationState.FAILED:
+                            status = "failed"
+                            failed_count += 1
+                        else:
+                            status = "disconnected"
+                            failed_count += 1
+
+                        if last_registered:
+                            logger.warning(f"SIP registration lost - state: {reg_state}")
+                            await self._update_connection_status("DISCONNECTED")
+
+                        # Attempt re-registration after 3 consecutive failures (15 seconds)
+                        if failed_count >= 3 and failed_count % 6 == 0:  # Every 30 seconds
+                            logger.info("Attempting SIP re-registration...")
+                            try:
+                                settings = await self._get_sip_settings()
+                                if settings:
+                                    transport_type = settings.sip_transport.value if hasattr(settings.sip_transport, 'value') else str(settings.sip_transport)
+                                    srtp_mode = self._get_srtp_mode(settings)
+                                    self.sip_engine.register(
+                                        username=settings.sip_username,
+                                        password=settings._decrypted_password,
+                                        transport=transport_type,
+                                        srtp_mode=srtp_mode
+                                    )
+                            except Exception as e:
+                                logger.error(f"Re-registration failed: {e}")
+
+                    last_registered = is_registered
+
+                    # Always publish status for real-time updates
+                    await self._publish_sip_heartbeat(status, active_calls)
+
+                await asyncio.sleep(self.sip_heartbeat_interval)
+
+            except asyncio.CancelledError:
+                logger.info("SIP heartbeat loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in SIP heartbeat: {e}")
+                await asyncio.sleep(5)
+
+    async def _publish_sip_heartbeat(self, status: str, active_calls: int):
+        """Publish SIP heartbeat status to Redis."""
+        import json
+        from datetime import datetime
+
+        try:
+            r = self._get_redis_client()
+
+            # Get extension from SIP engine
+            extension = None
+            server = None
+            if self.sip_engine and self.sip_engine._account:
+                # Try to get from account info
+                pass  # Extension is set during registration
+
+            settings = await self._get_sip_settings()
+            if settings:
+                extension = settings.sip_username
+                server = settings.sip_server
+
+            status_data = {
+                "status": status,
+                "extension": extension,
+                "server": server,
+                "active_calls": active_calls,
+                "last_updated": datetime.utcnow().isoformat()
+            }
+
+            # Store in Redis with 15 second expiry (3x heartbeat interval)
+            await r.set("dialer:sip_status", json.dumps(status_data), ex=15)
+
+            # Also publish to WebSocket channel for real-time updates
+            ws_message = json.dumps({
+                "type": "sip.status",
+                "data": status_data
+            })
+            await r.publish("ws:sip_status", ws_message)
+
+            await r.aclose()
+
+        except Exception as e:
+            logger.error(f"Failed to publish SIP heartbeat: {e}")
+
+    def _handle_inbound_call(self, call):
+        """
+        Handle an incoming call (handset mode).
+
+        This is called synchronously from PJSUA2 callback, so we schedule
+        the async handler in the event loop.
+        """
+        logger.info(f"Inbound call received: {call.info.call_id} from {call.info.caller_id}")
+
+        # Track the call
+        self.active_calls[call.info.call_id] = call
+
+        # Schedule async handling
+        asyncio.create_task(self._process_inbound_call(call))
+
+    async def _process_inbound_call(self, call):
+        """
+        Process an inbound call asynchronously.
+
+        This will:
+        1. Look up voice agent routing based on DID
+        2. Answer the call
+        3. Execute voice agent conversation if configured
+        4. Or play a simple greeting and hang up
+        """
+        import json
+
+        try:
+            # Get caller info
+            caller_id = call.info.caller_id
+            destination = call.info.destination
+
+            # Parse phone numbers from SIP URIs
+            caller_number = self._extract_phone_from_uri(caller_id)
+            did_number = self._extract_phone_from_uri(destination)
+
+            logger.info(f"Processing inbound call: {caller_number} -> {did_number}")
+
+            # Publish inbound call event
+            await self._publish_inbound_call_event(call, caller_number, did_number)
+
+            # Try to route to voice agent
+            voice_agent_config = await self._get_voice_agent_for_did(did_number)
+
+            if voice_agent_config:
+                logger.info(f"Routing to voice agent: {voice_agent_config.get('name', 'Unknown')}")
+
+                # Answer the call
+                call.answer(200)
+                await asyncio.sleep(0.5)  # Wait for media to be ready
+
+                # Execute voice agent session
+                await self._execute_voice_agent_session(call, voice_agent_config, caller_number)
+            else:
+                # No voice agent configured - answer and hang up with message
+                logger.info(f"No voice agent configured for DID {did_number}")
+
+                # Answer the call
+                call.answer(200)
+                await asyncio.sleep(2)  # Brief delay
+
+                # Hang up
+                call.hangup()
+
+        except Exception as e:
+            logger.error(f"Error processing inbound call: {e}")
+            import traceback
+            traceback.print_exc()
+
+            try:
+                call.hangup()
+            except:
+                pass
+        finally:
+            # Clean up
+            self.active_calls.pop(call.info.call_id, None)
+
+    def _extract_phone_from_uri(self, sip_uri: str) -> str:
+        """Extract phone number from SIP URI like sip:1005@server:port."""
+        if not sip_uri:
+            return ""
+
+        # Remove sip: prefix
+        if sip_uri.startswith("sip:"):
+            sip_uri = sip_uri[4:]
+        elif sip_uri.startswith("<sip:"):
+            sip_uri = sip_uri[5:].rstrip(">")
+
+        # Get the user part before @
+        if "@" in sip_uri:
+            return sip_uri.split("@")[0]
+
+        return sip_uri
+
+    async def _get_voice_agent_for_did(self, did_number: str) -> Optional[Dict]:
+        """Look up voice agent configuration for a DID number."""
+        from sqlalchemy import select, and_
+
+        db_url, connect_args = self._get_async_db_url_and_connect_args()
+        engine = create_async_engine(db_url, connect_args=connect_args)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        try:
+            async with async_session() as session:
+                # Import models here to avoid circular imports
+                from app.models.voice_agent import InboundRoute, VoiceAgentConfig
+
+                # Find matching route by DID pattern
+                result = await session.execute(
+                    select(InboundRoute, VoiceAgentConfig)
+                    .join(VoiceAgentConfig, InboundRoute.agent_config_id == VoiceAgentConfig.id)
+                    .where(
+                        and_(
+                            InboundRoute.is_active == True,
+                            VoiceAgentConfig.status == 'active'
+                        )
+                    )
+                    .order_by(InboundRoute.priority)
+                )
+                routes = result.all()
+
+                # Check each route for pattern match
+                import fnmatch
+                for route, agent in routes:
+                    if fnmatch.fnmatch(did_number, route.did_pattern):
+                        logger.info(f"Matched DID {did_number} to route {route.did_pattern} -> agent {agent.name}")
+                        return {
+                            "id": agent.id,
+                            "name": agent.name,
+                            "system_prompt": agent.system_prompt,
+                            "greeting_message": agent.greeting_message,
+                            "llm_model": agent.llm_model,
+                            "tts_voice": agent.tts_voice,
+                            "max_turns": agent.max_turns,
+                            "organization_id": agent.organization_id
+                        }
+
+                return None
+
+        except Exception as e:
+            logger.error(f"Error looking up voice agent: {e}")
+            return None
+        finally:
+            await engine.dispose()
+
+    async def _execute_voice_agent_session(self, call, agent_config: Dict, caller_number: str):
+        """Execute a voice agent conversation session."""
+        try:
+            # Import voice agent handler
+            from dialer.voice_agent.inbound_handler import InboundVoiceHandler
+
+            handler = InboundVoiceHandler(
+                db_url=self.db_url,
+                redis_url=self.redis_url,
+                s3_client=self._get_s3_client(),
+                s3_bucket=self.s3_bucket
+            )
+
+            await handler.handle_call(
+                call=call,
+                agent_config=agent_config,
+                caller_number=caller_number
+            )
+
+        except ImportError:
+            logger.warning("Voice agent module not available - basic answer only")
+            await asyncio.sleep(5)
+            call.hangup()
+        except Exception as e:
+            logger.error(f"Voice agent session error: {e}")
+            call.hangup()
+
+    async def _publish_inbound_call_event(self, call, caller_number: str, did_number: str):
+        """Publish inbound call event to Redis/WebSocket."""
+        import json
+        from datetime import datetime
+
+        try:
+            r = self._get_redis_client()
+
+            event = {
+                "type": "call.inbound",
+                "data": {
+                    "call_id": call.info.call_id,
+                    "caller_number": caller_number,
+                    "did_number": did_number,
+                    "status": "ringing",
+                    "started_at": datetime.utcnow().isoformat()
+                }
+            }
+
+            await r.publish("ws:calls", json.dumps(event))
+            await r.aclose()
+
+        except Exception as e:
+            logger.error(f"Failed to publish inbound call event: {e}")
+
     async def _redis_keepalive(self, redis_client, stop_event: asyncio.Event):
         """Send periodic pings to keep Redis connection alive."""
         while not stop_event.is_set():
@@ -1547,6 +1878,15 @@ class DialerEngine:
         """Stop the dialer engine."""
         logger.info("Stopping Dialer Engine...")
         self.running = False
+
+        # Cancel background tasks
+        for task in [self._test_call_listener_task, self._call_monitor_task, self._sip_heartbeat_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         # Stop call manager
         if self.call_manager:

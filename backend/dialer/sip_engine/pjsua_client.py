@@ -75,7 +75,8 @@ class SIPAccount:
     PJSUA2 Account for UCM registration.
 
     Handles SIP REGISTER requests and maintains registration state
-    with the Grandstream UCM.
+    with the Grandstream UCM. Acts like a SIP handset - always
+    registered and ready to receive/make calls.
     """
 
     def __init__(self, engine: 'SIPEngine'):
@@ -83,6 +84,8 @@ class SIPAccount:
         self.state = RegistrationState.UNREGISTERED
         self.last_error = ""
         self._pj_account: Optional[Any] = None
+        self._inbound_call_handler: Optional[Callable] = None
+        self._last_reg_time: float = 0
 
     def create(self, server: str, port: int, username: str, password: str, transport: str = "UDP", srtp_mode: int = 0):
         """Create and configure the PJSUA2 account."""
@@ -143,6 +146,7 @@ class SIPAccount:
 
         if code == 200:
             self.state = RegistrationState.REGISTERED
+            self._last_reg_time = time.time()
             logger.info(f"SIP registration successful: {reason}")
         elif code == 401 or code == 407:
             # Authentication challenge - PJSUA2 handles this automatically
@@ -154,6 +158,25 @@ class SIPAccount:
             logger.error(f"SIP registration failed: {code} {reason}")
         else:
             logger.info(f"SIP registration state: {code} {reason}")
+
+    def on_incoming_call(self, call: 'SIPCall'):
+        """Callback when an incoming call is received."""
+        logger.info(f"Incoming call from {call.info.caller_id} to {call.info.destination}")
+
+        if self._inbound_call_handler:
+            try:
+                self._inbound_call_handler(call)
+            except Exception as e:
+                logger.error(f"Error in inbound call handler: {e}")
+                call.hangup()
+        else:
+            logger.warning("No inbound call handler registered - rejecting call")
+            call.hangup()
+
+    def set_inbound_call_handler(self, handler: Callable):
+        """Set the handler for incoming calls."""
+        self._inbound_call_handler = handler
+        logger.info("Inbound call handler registered")
 
     def unregister(self):
         """Unregister from the SIP server."""
@@ -198,6 +221,17 @@ class SIPCall:
     def state(self) -> CallState:
         """Get the current call state."""
         return self.info.state
+
+    def answer(self, code: int = 200):
+        """Answer an incoming call."""
+        if not PJSUA2_AVAILABLE:
+            raise RuntimeError("PJSUA2 not available")
+
+        if self._pj_call:
+            prm = pj.CallOpParam()
+            prm.statusCode = code
+            self._pj_call.answer(prm)
+            logger.info(f"Answered call {self.info.call_id} with code {code}")
 
     def make_call(self, destination: str, caller_id: str = ""):
         """Initiate an outbound call."""
@@ -569,6 +603,18 @@ class SIPEngine:
         """Get a call by ID."""
         return self._calls.get(call_id)
 
+    def set_inbound_call_handler(self, handler: Callable):
+        """Set the handler for incoming calls (handset mode)."""
+        if self._account:
+            self._account.set_inbound_call_handler(handler)
+        else:
+            logger.warning("Cannot set inbound handler - no account registered")
+
+    def add_inbound_call(self, call: SIPCall):
+        """Track an inbound call."""
+        self._calls[call.info.call_id] = call
+        logger.info(f"Tracking inbound call: {call.info.call_id}")
+
     def unregister(self):
         """Unregister from the SIP server."""
         if self._account:
@@ -611,6 +657,26 @@ if PJSUA2_AVAILABLE:
             """Called when registration state changes."""
             info = self.getInfo()
             self._wrapper.on_reg_state(info)
+
+        def onIncomingCall(self, prm):
+            """Called when an incoming call is received."""
+            try:
+                # Create a SIPCall wrapper for the incoming call
+                call = SIPCall(self._wrapper, f"inbound-{uuid.uuid4().hex[:12]}")
+                call._pj_call = _PJCall(call, self)
+
+                # Get call info
+                call_info = call._pj_call.getInfo()
+                call.info.caller_id = call_info.remoteUri
+                call.info.destination = call_info.localUri
+                call.info.state = CallState.RINGING
+
+                logger.info(f"Incoming call: {call.info.caller_id} -> {call.info.destination}")
+
+                # Notify the wrapper
+                self._wrapper.on_incoming_call(call)
+            except Exception as e:
+                logger.error(f"Error handling incoming call: {e}")
 
     class _PJCall(pj.Call):
         """Internal PJSUA2 Call with callbacks."""
