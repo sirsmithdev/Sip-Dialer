@@ -7,6 +7,11 @@ by connecting directly as a PJSIP extension to the UCM6302/PBX.
 The dialer acts like a SIP handset - it registers with the PBX,
 maintains persistent connection, handles both inbound and outbound calls.
 
+Version: 2.2.1 - Fix Redis pubsub disconnection on DO Valkey (2025-12-26)
+  - Fixed 5-minute Redis pubsub disconnections caused by DO Valkey idle timeout
+  - Now ping both main Redis client AND pubsub connection in keepalive task
+  - Root cause: DO Managed Valkey has 300s idle timeout, pubsub was not being pinged
+
 Version: 2.2.0 - Database connection pooling & improved logging (2025-12-26)
   - Added shared database connection pool to prevent connection exhaustion
   - Changed keepalive logs from DEBUG to INFO for visibility
@@ -421,7 +426,7 @@ class DialerEngine:
     async def start(self):
         """Start the dialer engine."""
         self.running = True
-        logger.info("Starting Dialer Engine v2.2.0 (SIP Handset Mode - DB Pooling + Improved Logging)...")
+        logger.info("Starting Dialer Engine v2.2.1 (SIP Handset Mode - Redis Pubsub Fix)...")
 
         # Check if SIP engine is available
         if not SIP_ENGINE_AVAILABLE:
@@ -1450,8 +1455,14 @@ class DialerEngine:
         except Exception as e:
             logger.error(f"Failed to publish inbound call event: {e}")
 
-    async def _redis_keepalive(self, redis_client, stop_event: asyncio.Event):
-        """Send periodic pings to keep Redis connection alive."""
+    async def _redis_keepalive(self, redis_client, stop_event: asyncio.Event, pubsub=None):
+        """Send periodic pings to keep Redis connection alive.
+
+        Args:
+            redis_client: Main Redis client connection
+            stop_event: Event to signal shutdown
+            pubsub: Optional pubsub connection to also keep alive
+        """
         ping_count = 0
         while not stop_event.is_set():
             try:
@@ -1459,8 +1470,13 @@ class DialerEngine:
                 if not stop_event.is_set():
                     await redis_client.ping()
                     ping_count += 1
-                    # Log every ping at INFO level for visibility
                     logger.info(f"Redis keepalive ping #{ping_count} successful")
+
+                    # Also ping pubsub connection if provided
+                    # This prevents DO Valkey 5-minute idle timeout on pubsub
+                    if pubsub:
+                        await pubsub.ping()
+                        logger.debug(f"Pubsub keepalive ping #{ping_count} successful")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1490,7 +1506,8 @@ class DialerEngine:
                 logger.info("Listening for test calls on Redis channel: dialer:test_call")
 
                 # Start keepalive task to prevent idle timeout
-                keepalive_task = asyncio.create_task(self._redis_keepalive(r, stop_event))
+                # Pass pubsub to also ping it - prevents DO Valkey 5-minute idle timeout
+                keepalive_task = asyncio.create_task(self._redis_keepalive(r, stop_event, pubsub=pubsub))
 
                 async for message in pubsub.listen():
                     if not self.running:
