@@ -110,6 +110,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - APP_ENV=production
       - LOG_LEVEL=INFO
+      - PUBLIC_IP=${PUBLIC_IP}
+      - DEBUG=1
     volumes:
       - audio_files:/var/lib/autodialer/audio
     restart: always
