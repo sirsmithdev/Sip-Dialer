@@ -131,6 +131,31 @@ class SIPAccount:
         srtp_mode_names = {0: "DISABLED", 1: "OPTIONAL", 2: "MANDATORY"}
         logger.info(f"Account SRTP config: srtpUse={srtp_mode_names.get(srtp_mode, 'UNKNOWN')}, srtpSecureSignaling=0")
 
+        # DTMF configuration for Grandstream UCM compatibility
+        # Grandstream default: RFC2833 (preferred), also supports SIP INFO and Inband
+        # PJMEDIA_DTMF_METHOD_RFC2833 = 0 (default)
+        # PJMEDIA_DTMF_METHOD_SIP_INFO = 1
+        # PJMEDIA_DTMF_METHOD_INBAND = 2
+        # acc_cfg.mediaConfig.dtmfMethod = 0  # RFC2833 is default
+
+        # Enable ICE for NAT traversal (helps with Grandstream Direct Media)
+        acc_cfg.natConfig.iceEnabled = False  # Disabled by default, Grandstream may not support
+        # Disable TURN (requires external TURN server)
+        acc_cfg.natConfig.turnEnabled = False
+
+        # Contact rewrite for NAT - update Contact header with actual public address
+        # This helps when behind NAT - PJSIP will rewrite Contact with learned address
+        acc_cfg.natConfig.contactRewriteUse = 1
+        acc_cfg.natConfig.contactRewriteMethod = 2  # PJSUA_CONTACT_REWRITE_ALWAYS
+
+        # Via header rewrite for NAT
+        acc_cfg.natConfig.viaRewriteUse = True
+
+        # SDP NAT rewrite - update SDP with public IP
+        acc_cfg.natConfig.sdpNatRewriteUse = True
+
+        logger.info("Account NAT config: contactRewrite=ON, viaRewrite=ON, sdpNatRewrite=ON")
+
         # Create the account with callback handler
         self._pj_account = _PJAccount(self)
         self._pj_account.create(acc_cfg)
@@ -295,14 +320,39 @@ class SIPCall:
         if not self._pj_call:
             return
 
-        # Connect audio media to speaker/mic for monitoring (optional)
-        # For auto-dialer, we primarily play audio files
+        # Connect audio media when active
+        # This is critical for both inbound and outbound calls
         call_info = self._pj_call.getInfo()
 
-        for mi in call_info.media:
-            if mi.type == pj.PJMEDIA_TYPE_AUDIO and mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE:
-                # Audio media is active - can play/record audio
-                logger.debug(f"Call {self.info.call_id}: Audio media active")
+        for i, mi in enumerate(call_info.media):
+            if mi.type == pj.PJMEDIA_TYPE_AUDIO:
+                if mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE:
+                    # Audio media is active - connect to audio bridge
+                    try:
+                        audio_media = self._pj_call.getAudioMedia(i)
+                        # Get the endpoint's audio device manager
+                        # This connects the call to the audio subsystem
+                        # For inbound calls, this enables audio to flow properly
+                        endpoint = pj.Endpoint.instance()
+                        aud_dev_mgr = endpoint.audDevManager()
+
+                        # Connect call audio to playback (we can hear remote)
+                        audio_media.startTransmit(aud_dev_mgr.getPlaybackDevMedia())
+                        # Connect capture to call (remote can hear us)
+                        aud_dev_mgr.getCaptureDevMedia().startTransmit(audio_media)
+
+                        logger.info(f"Call {self.info.call_id}: Audio media connected (bidirectional)")
+                    except Exception as e:
+                        # This is expected when using null audio device
+                        # The audio will still work for file playback
+                        logger.debug(f"Call {self.info.call_id}: Audio bridge connection: {e}")
+                        logger.info(f"Call {self.info.call_id}: Audio media active (file playback mode)")
+                elif mi.status == pj.PJSUA_CALL_MEDIA_LOCAL_HOLD:
+                    logger.info(f"Call {self.info.call_id}: Audio on hold (local)")
+                elif mi.status == pj.PJSUA_CALL_MEDIA_REMOTE_HOLD:
+                    logger.info(f"Call {self.info.call_id}: Audio on hold (remote)")
+                elif mi.status == pj.PJSUA_CALL_MEDIA_NONE:
+                    logger.debug(f"Call {self.info.call_id}: Audio media inactive")
 
     def on_dtmf_digit(self, digit: str):
         """Callback when DTMF digit is received."""
@@ -340,6 +390,73 @@ class SIPCall:
                 return self._pj_call.getAudioMedia(i)
         return None
 
+    def send_dtmf(self, digits: str, method: int = 0):
+        """
+        Send DTMF digits to the remote party.
+
+        Args:
+            digits: DTMF digits to send (0-9, *, #, A-D)
+            method: DTMF method:
+                    0 = RFC2833 (default, preferred for Grandstream)
+                    1 = SIP INFO
+                    2 = Inband (requires G.711)
+        """
+        if not self._pj_call or self.info.state != CallState.CONFIRMED:
+            logger.warning(f"Cannot send DTMF - call not active")
+            return False
+
+        try:
+            prm = pj.CallOpParam()
+            prm.options = method  # DTMF method
+            for digit in digits:
+                self._pj_call.dialDtmf(digit)
+                logger.debug(f"Call {self.info.call_id}: Sent DTMF '{digit}'")
+            logger.info(f"Call {self.info.call_id}: Sent DTMF digits '{digits}'")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send DTMF: {e}")
+            return False
+
+    def get_media_info(self) -> dict:
+        """
+        Get detailed media information for this call.
+        Useful for debugging Grandstream compatibility issues.
+        """
+        if not self._pj_call:
+            return {}
+
+        try:
+            call_info = self._pj_call.getInfo()
+            media_info = {
+                "media_count": len(call_info.media),
+                "streams": []
+            }
+
+            for i, mi in enumerate(call_info.media):
+                stream_info = {
+                    "index": i,
+                    "type": "audio" if mi.type == pj.PJMEDIA_TYPE_AUDIO else "video" if mi.type == pj.PJMEDIA_TYPE_VIDEO else "unknown",
+                    "status": self._media_status_str(mi.status),
+                    "direction": mi.dir
+                }
+                media_info["streams"].append(stream_info)
+
+            return media_info
+        except Exception as e:
+            logger.error(f"Error getting media info: {e}")
+            return {}
+
+    def _media_status_str(self, status) -> str:
+        """Convert media status to string."""
+        status_map = {
+            pj.PJSUA_CALL_MEDIA_NONE: "none",
+            pj.PJSUA_CALL_MEDIA_ACTIVE: "active",
+            pj.PJSUA_CALL_MEDIA_LOCAL_HOLD: "local_hold",
+            pj.PJSUA_CALL_MEDIA_REMOTE_HOLD: "remote_hold",
+            pj.PJSUA_CALL_MEDIA_ERROR: "error"
+        }
+        return status_map.get(status, f"unknown({status})")
+
 
 class SRTPMode:
     """SRTP mode constants matching PJSUA2."""
@@ -373,7 +490,12 @@ class SIPEngine:
         self.local_port = 5061
         self.rtp_port_start = 10000
         self.rtp_port_end = 20000
-        self.codecs = ["PCMU/8000", "PCMA/8000", "G722/16000"]
+        # Grandstream UCM compatible codecs (priority order)
+        # PCMU (G.711 μ-law) - Primary, universal compatibility
+        # PCMA (G.711 A-law) - Secondary, EU standard
+        # G722 - Wideband for better quality when supported
+        # telephone-event - RFC2833 DTMF support (critical for Grandstream)
+        self.codecs = ["PCMU/8000", "PCMA/8000", "G722/16000", "telephone-event/8000"]
 
     @property
     def is_registered(self) -> bool:
@@ -446,16 +568,32 @@ class SIPEngine:
         ep_cfg.logConfig.level = log_level
         ep_cfg.logConfig.consoleLevel = log_level
 
-        # Media config
+        # User Agent config for NAT traversal
+        # Enable symmetric RTP - critical for NAT/firewall traversal with Grandstream
+        # This ensures RTP is sent from the same port it's received on
+        ep_cfg.uaConfig.natTypeInSdp = 1
+
+        # Media config - optimized for Grandstream UCM
         ep_cfg.medConfig.clockRate = 8000
         ep_cfg.medConfig.sndClockRate = 8000
         ep_cfg.medConfig.channelCount = 1
-        ep_cfg.medConfig.audioFramePtime = 20
-        ep_cfg.medConfig.noVad = True
+        ep_cfg.medConfig.audioFramePtime = 20  # 20ms ptime - standard for G.711
+        ep_cfg.medConfig.noVad = True  # Disable VAD - Grandstream prefers continuous audio
+
+        # Enable symmetric RTP at media level for NAT traversal
+        # This is critical for cloud VPS where public IP differs from local IP
+        ep_cfg.medConfig.enableSymRtp = True
 
         # RTP port range
         ep_cfg.medConfig.rtpPortStart = rtp_port_start
         ep_cfg.medConfig.rtpPortEnd = rtp_port_end
+
+        # STUN server for NAT traversal (optional but recommended)
+        import os
+        stun_server = os.environ.get('STUN_SERVER', 'stun.l.google.com:19302')
+        if stun_server:
+            ep_cfg.uaConfig.stunServer.append(stun_server)
+            logger.info(f"NAT: Using STUN server {stun_server}")
 
         # Initialize
         self._endpoint.libInit(ep_cfg)
@@ -471,6 +609,13 @@ class SIPEngine:
         # Create transport based on type
         tp_cfg = pj.TransportConfig()
         tp_cfg.port = local_port
+
+        # Configure public IP for NAT traversal (important for cloud VPS)
+        import os
+        public_ip = os.environ.get('PUBLIC_IP', '')
+        if public_ip:
+            tp_cfg.publicAddress = public_ip
+            logger.info(f"NAT: Using public IP {public_ip} for SDP")
 
         if self.transport_type == "TLS":
             # Configure TLS transport
@@ -514,24 +659,50 @@ class SIPEngine:
         logger.info(f"SIP engine initialized successfully with {self.transport_type} transport")
 
     def _configure_codecs(self):
-        """Configure codec priorities."""
+        """Configure codec priorities optimized for Grandstream UCM."""
         if not self._endpoint:
             return
 
-        # Disable all codecs first
+        # Log available codecs for debugging
         codec_infos = self._endpoint.codecEnum2()
+        available = [ci.codecId for ci in codec_infos]
+        logger.info(f"Available codecs: {available}")
+
+        # Disable all codecs first
         for ci in codec_infos:
             self._endpoint.codecSetPriority(ci.codecId, 0)
 
         # Enable preferred codecs with priority
+        # Higher priority = preferred codec
         priority = 255
+        enabled_codecs = []
         for codec in self.codecs:
             try:
                 self._endpoint.codecSetPriority(codec, priority)
+                enabled_codecs.append(f"{codec}({priority})")
                 priority -= 1
-                logger.debug(f"Enabled codec: {codec}")
             except Exception as e:
                 logger.warning(f"Could not enable codec {codec}: {e}")
+
+        logger.info(f"Enabled codecs (priority order): {enabled_codecs}")
+
+        # Configure codec parameters for Grandstream compatibility
+        # G.711: 20ms ptime is standard and compatible with all systems
+        # Grandstream UCM default is 20ms ptime for G.711
+        try:
+            # PCMU settings
+            param = self._endpoint.codecGetParam("PCMU/8000")
+            param.setting.frmTime = 20  # 20ms ptime
+            self._endpoint.codecSetParam("PCMU/8000", param)
+
+            # PCMA settings
+            param = self._endpoint.codecGetParam("PCMA/8000")
+            param.setting.frmTime = 20  # 20ms ptime
+            self._endpoint.codecSetParam("PCMA/8000", param)
+
+            logger.info("Codec parameters configured: G.711 ptime=20ms")
+        except Exception as e:
+            logger.debug(f"Could not configure codec parameters: {e}")
 
     def register(
         self,
