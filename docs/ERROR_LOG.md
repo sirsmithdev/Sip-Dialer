@@ -279,9 +279,9 @@ async def get_voice_agent(agent_id: str): ...
 
 ## Redis/Connection Errors
 
-### ERR-006: DigitalOcean Managed Redis Connection Drops
+### ERR-006: DigitalOcean Managed Redis/Valkey Connection Drops
 
-**Date**: 2025-12-25
+**Date**: 2025-12-25 (updated 2025-12-27)
 
 **Symptoms**:
 - Redis pubsub listener disconnects every ~5 minutes
@@ -290,7 +290,9 @@ async def get_voice_agent(agent_id: str): ...
 - SIP test may fail even when dialer is registered
 
 **Root Cause**:
-DigitalOcean Managed Redis has an idle connection timeout (~5 minutes). When using pub/sub, if no messages are published for this period, the connection appears idle and gets terminated.
+DigitalOcean Managed Redis/Valkey has a **300-second (5-minute) idle timeout**. The pubsub connection sits idle waiting for messages - it only receives, never sends. After 5 minutes of no outbound traffic, the server closes it.
+
+**Critical Issue**: The main Redis client and pubsub use **separate connections**. Pinging the main client does NOT keep the pubsub connection alive.
 
 **Files Affected**:
 - `backend/dialer/main.py`
@@ -301,10 +303,16 @@ DigitalOcean Managed Redis has an idle connection timeout (~5 minutes). When usi
 ```python
 # Redis client without keepalive
 redis.from_url(redis_url, decode_responses=True)
+
+# Keepalive only pings main client, NOT pubsub (STILL BREAKS!)
+r = self._get_redis_client()
+pubsub = r.pubsub()
+await pubsub.subscribe("channel")
+keepalive_task = asyncio.create_task(self._redis_keepalive(r, stop_event))  # Only pings 'r'!
 ```
 
 **Solution**:
-Add `socket_keepalive=True` and `health_check_interval=30` to all Redis clients:
+1. Add `socket_keepalive=True` and `health_check_interval=30` to all Redis clients:
 
 ```python
 # Redis client with keepalive (prevents idle timeout)
@@ -316,19 +324,40 @@ redis.from_url(
 )
 ```
 
-For pub/sub listeners, also add a concurrent keepalive task:
+2. **Critical**: For pub/sub listeners, ping BOTH the main client AND the pubsub connection:
+
 ```python
-async def _redis_keepalive(self, redis_client, stop_event):
+async def _redis_keepalive(self, redis_client, stop_event, pubsub=None):
+    """Send periodic pings to keep Redis connection alive."""
+    ping_count = 0
     while not stop_event.is_set():
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)  # Ping every 60 seconds
         if not stop_event.is_set():
             await redis_client.ping()
+            ping_count += 1
+            logger.info(f"Redis keepalive ping #{ping_count} successful")
+
+            # CRITICAL: Also ping pubsub connection!
+            # This prevents DO Valkey 5-minute idle timeout on pubsub
+            if pubsub:
+                await pubsub.ping()
+                logger.debug(f"Pubsub keepalive ping #{ping_count} successful")
+
+# Usage - pass pubsub to keepalive task
+r = self._get_redis_client()
+pubsub = r.pubsub()
+await pubsub.subscribe("channel")
+keepalive_task = asyncio.create_task(self._redis_keepalive(r, stop_event, pubsub=pubsub))
 ```
 
 **Prevention**:
 - Always use `socket_keepalive=True` for Redis connections
 - Always use `health_check_interval=30` for production
 - For SSL Redis (`rediss://`), also add `ssl_cert_reqs=None` for DO Managed Redis
+- **For pubsub**: Always ping the pubsub connection itself, not just the main client
+- Remember: pubsub uses a separate connection that doesn't benefit from main client pings
+
+**Fix Applied**: v2.2.1 (commit 88deeb2) - 2025-12-27
 
 ---
 
