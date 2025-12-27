@@ -123,8 +123,17 @@ class MediaHandler:
             self._audio_player = pj.AudioMediaPlayer()
             self._audio_player.createPlayer(str(path), pj.PJMEDIA_FILE_NO_LOOP)
 
+            # Log audio media info for debugging
+            try:
+                port_info = audio_media.getPortInfo()
+                logger.info(f"Call audio media: name={port_info.name}, format={port_info.format.clockRate}Hz")
+            except Exception as e:
+                logger.debug(f"Could not get port info: {e}")
+
             # Connect player to call's audio media
+            # This transmits the audio file to the remote party via RTP
             self._audio_player.startTransmit(audio_media)
+            logger.info(f"Audio player connected to call media - transmitting to remote party")
 
             self._playback_state = PlaybackState.PLAYING
             self._playback_completed_event.clear()

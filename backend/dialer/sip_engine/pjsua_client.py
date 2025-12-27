@@ -320,33 +320,16 @@ class SIPCall:
         if not self._pj_call:
             return
 
-        # Connect audio media when active
-        # This is critical for both inbound and outbound calls
+        # Log media state changes for debugging
         call_info = self._pj_call.getInfo()
 
         for i, mi in enumerate(call_info.media):
             if mi.type == pj.PJMEDIA_TYPE_AUDIO:
                 if mi.status == pj.PJSUA_CALL_MEDIA_ACTIVE:
-                    # Audio media is active - connect to audio bridge
-                    try:
-                        audio_media = self._pj_call.getAudioMedia(i)
-                        # Get the endpoint's audio device manager
-                        # This connects the call to the audio subsystem
-                        # For inbound calls, this enables audio to flow properly
-                        endpoint = pj.Endpoint.instance()
-                        aud_dev_mgr = endpoint.audDevManager()
-
-                        # Connect call audio to playback (we can hear remote)
-                        audio_media.startTransmit(aud_dev_mgr.getPlaybackDevMedia())
-                        # Connect capture to call (remote can hear us)
-                        aud_dev_mgr.getCaptureDevMedia().startTransmit(audio_media)
-
-                        logger.info(f"Call {self.info.call_id}: Audio media connected (bidirectional)")
-                    except Exception as e:
-                        # This is expected when using null audio device
-                        # The audio will still work for file playback
-                        logger.debug(f"Call {self.info.call_id}: Audio bridge connection: {e}")
-                        logger.info(f"Call {self.info.call_id}: Audio media active (file playback mode)")
+                    # Audio media is active - ready for file playback
+                    # Note: We use null audio device, so we don't connect to physical audio
+                    # AudioMediaPlayer will transmit directly to the call's audio slot
+                    logger.info(f"Call {self.info.call_id}: Audio media ACTIVE (slot {i}) - ready for playback")
                 elif mi.status == pj.PJSUA_CALL_MEDIA_LOCAL_HOLD:
                     logger.info(f"Call {self.info.call_id}: Audio on hold (local)")
                 elif mi.status == pj.PJSUA_CALL_MEDIA_REMOTE_HOLD:
