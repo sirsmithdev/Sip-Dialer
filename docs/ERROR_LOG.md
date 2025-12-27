@@ -10,6 +10,7 @@ This document tracks errors encountered during development and deployment, along
 3. [API Errors](#api-errors)
 4. [Deployment Errors](#deployment-errors)
 5. [Redis/Connection Errors](#redisconnection-errors)
+6. [SIP/Network Errors](#sipnetwork-errors)
 
 ---
 
@@ -275,6 +276,18 @@ async def get_voice_agent(agent_id: str): ...
 3. Check WebSocket connection in browser console
 4. Fallback: Dashboard polls `/settings/dialer/status` every 10-30 seconds
 
+### SIP Test Shows "UCM did not respond to OPTIONS probe"
+1. This warning is **normal** if dialer is registered
+2. Check if overall test result is `success=True` (it should be)
+3. The OPTIONS probe is sent from API server (different IP than dialer)
+4. UCM may ignore OPTIONS from non-registered sources
+5. If test fails completely, check Redis for `dialer:sip_status` key expiry
+
+### Inbound Calls Not Working
+1. Check if using DO App Platform (see ERR-007 - **architectural limitation**)
+2. Workers cannot receive inbound UDP/TCP connections
+3. Solution: Migrate dialer-engine to DOKS or Droplet with static IP
+
 ---
 
 ## Redis/Connection Errors
@@ -358,6 +371,154 @@ keepalive_task = asyncio.create_task(self._redis_keepalive(r, stop_event, pubsub
 - Remember: pubsub uses a separate connection that doesn't benefit from main client pings
 
 **Fix Applied**: v2.2.1 (commit 88deeb2) - 2025-12-27
+
+---
+
+## SIP/Network Errors
+
+### ERR-007: DO App Platform Cannot Receive Inbound SIP Connections
+
+**Date**: 2025-12-27
+
+**Symptoms**:
+- Outbound calls work perfectly (dialer → UCM → phone)
+- Inbound calls never reach the dialer
+- SIP test shows "⚠ UCM did not respond to OPTIONS probe" (this is normal)
+- Dialer IS registered with UCM but cannot receive INVITE packets
+- Dashboard shows dialer as "registered" but inbound routes don't work
+
+**Root Cause**:
+DigitalOcean App Platform **workers cannot receive inbound connections**. The platform only provides:
+- **Egress**: Dedicated IP for outbound connections (works for SIP registration)
+- **Ingress**: HTTP-only routing to services (paths `/` and `/api`)
+
+SIP requires bidirectional UDP/TCP connectivity:
+```
+OUTBOUND (WORKS):
+  dialer-engine ──REGISTER──> UCM ──INVITE──> Phone
+                ──INVITE────>
+
+INBOUND (BLOCKED):
+  dialer-engine <──INVITE──✗ UCM <────────── Phone
+         ↑
+   Workers have NO inbound connectivity!
+   UCM cannot send INVITE to the dialer.
+```
+
+**Files Affected**:
+- `backend/dialer/main.py` (dialer-engine worker)
+- `backend/dialer/voice_agent/inbound_handler.py` (never receives calls)
+- App Platform spec (`egress: DEDICATED_IP` is outbound only)
+
+**Current Architecture (Broken for Inbound)**:
+```yaml
+# App Platform spec
+workers:
+  - name: dialer-engine      # Workers have NO ingress!
+    ...
+egress:
+  type: DEDICATED_IP         # Only for OUTBOUND connections
+ingress:
+  rules:
+    - path: /                # HTTP only, goes to frontend
+    - path: /api             # HTTP only, goes to api
+    # No SIP/UDP/TCP ingress possible!
+```
+
+**Solution: Migrate to DOKS with NGINX Ingress + Floating IP**
+
+DigitalOcean Kubernetes Service (DOKS) supports TCP/UDP ingress via Load Balancer.
+
+**Step 1: Create DOKS Cluster**
+```bash
+doctl kubernetes cluster create sip-dialer-cluster \
+  --region nyc1 \
+  --size s-2vcpu-4gb \
+  --count 2
+```
+
+**Step 2: Install NGINX Ingress Controller**
+```bash
+# Via Helm
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --create-namespace \
+  --set controller.service.type=LoadBalancer
+
+# Verify Load Balancer IP
+kubectl get svc -n ingress-nginx
+# NAME                       TYPE           EXTERNAL-IP
+# ingress-nginx-controller   LoadBalancer   xxx.xxx.xxx.xxx
+```
+
+**Step 3: Create Floating IP for Static Address**
+```bash
+# Create Floating IP
+doctl compute floating-ip create --region nyc1
+
+# Note the IP address returned, e.g., 167.99.xxx.xxx
+
+# Attach to Load Balancer (get LB ID from DO console)
+doctl compute floating-ip-action assign <floating-ip> <load-balancer-id>
+```
+
+**Step 4: Configure TCP Ingress for SIP**
+```yaml
+# tcp-services-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tcp-services
+  namespace: ingress-nginx
+data:
+  "5061": "default/dialer-engine:5061"  # TLS SIP
+  "5060": "default/dialer-engine:5060"  # UDP SIP (if needed)
+```
+
+```yaml
+# dialer-engine-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: dialer-engine
+spec:
+  selector:
+    app: dialer-engine
+  ports:
+    - name: sip-tls
+      port: 5061
+      targetPort: 5061
+      protocol: TCP
+    - name: sip-udp
+      port: 5060
+      targetPort: 5060
+      protocol: UDP
+```
+
+**Step 5: Update UCM Configuration**
+```
+SIP Server: <floating-ip>
+SIP Port: 5061
+Transport: TLS
+```
+
+**Alternative Solutions**:
+
+| Option | Complexity | Cost | Notes |
+|--------|------------|------|-------|
+| **DOKS + Floating IP** | Medium | ~$20/mo | Full control, static IP, recommended |
+| **Droplet** | Low | ~$6/mo | Simple, dedicated server for dialer |
+| **SIP Trunk Provider** | Low | Per-min | Twilio/Telnyx accepts inbound, forwards via API |
+| **Outbound Only** | None | $0 | Accept limitation, campaigns still work |
+
+**Prevention**:
+- When deploying SIP applications, verify platform supports UDP/TCP ingress
+- DO App Platform is designed for HTTP workloads, not raw TCP/UDP
+- For VoIP/SIP, always use: Droplets, DOKS, or dedicated VoIP infrastructure
+- Document inbound call requirements early in architecture planning
+
+**Status**: Architecture limitation identified. Migration to DOKS recommended.
 
 ---
 
